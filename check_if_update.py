@@ -9,11 +9,11 @@ from email.mime.multipart import MIMEMultipart
 import numpy as np
 
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
-CHECK_INTERVAL = 6 # minutes
+CHECK_INTERVAL = 1.8 # minutes
 
 TRADING_SESSIONS = [
-    ("09:35", "11:30"),
-    ("13:05", "15:00")
+    ("09:32", "11:30"),
+    ("13:02", "15:00")
 ]
 
 EMAIL_CONFIG = {
@@ -22,7 +22,7 @@ EMAIL_CONFIG = {
     "EMAIL_USER": "liujz@dunhefund.com",
     "EMAIL_PASS": "cYT6xks26ERPZbcf",
     "EMAIL_TO": [
-        "yangjy@dunhefund.com"
+        "yangjy@dunhefund.com",
         "jiangl@dunhefund.com",
         "zhoujg@dunhefund.com",
         "xuh@dunhefund.com"
@@ -63,7 +63,7 @@ def is_in_trading_hours():
 
 def prepare_html():
 
-    html = f"{ datetime.datetime.now().strftime('%H:%M:%S')} 股指期货文件超过6min未更新!"
+    html = f"{ datetime.datetime.now().strftime('%H:%M:%S')} 股指期货文件超过{CHECK_INTERVAL}min未更新!"
     
     return html
 
@@ -93,15 +93,8 @@ if __name__ == '__main__':
 
             today, next_day = get_date_from_calendar()
             current_time = datetime.datetime.now().time()
-            close_time = datetime.time(15, 30)
     
-            if current_time > close_time:
-                date_int = date_int + 1
-                
-            if current_time > close_time:
-                file_path = f"/cpfs/prod/check/{next_day}/merged_futures_with_diff.csv"
-            else:
-                file_path = f"/cpfs/prod/check/{today}/merged_futures_with_diff.csv"
+            file_path = f"/cpfs/prod/check/{today}/merged_futures_with_diff.csv"
             
             if os.path.exists(file_path):
                 now = time.time()
