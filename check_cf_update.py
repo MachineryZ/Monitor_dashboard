@@ -40,7 +40,8 @@ EMAIL_CONFIG = {
         "yangjy@dunhefund.com",
         "jiangl@dunhefund.com",
         "zhoujg@dunhefund.com",
-        "xuh@dunhefund.com"
+        "xuh@dunhefund.com",
+        "zhangzhizuo@dunhefund.com"
     ]
 }
 
@@ -100,6 +101,14 @@ def is_in_trading_hours():
     else:
         return False
 
+def should_skip_cf_check_monday():
+    """
+    Mondays' early night session runs on Friday night; no need to run commodity
+    update check on Monday (avoids False alarm from stale file).
+    """
+    return datetime.now().weekdy() == 0
+
+
 def prepare_html():
 
     html = f"{ datetime.datetime.now().strftime('%H:%M:%S')} 商品期货文件超过6min未更新!"
@@ -128,7 +137,7 @@ if __name__ == '__main__':
     
     alert_triggered = False
     while True:
-        if is_in_trading_hours():
+        if is_in_trading_hours() and not should_skip_cf_check_monday():
 
             prev_today, today, next_day = get_date_from_calendar()
             current_time = datetime.datetime.now().time()
