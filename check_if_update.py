@@ -6,6 +6,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+from clickhouse_connect.driver impor create_client
+
 import numpy as np
 
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
@@ -19,8 +21,8 @@ TRADING_SESSIONS = [
 EMAIL_CONFIG = {
     "SMTP_SERVER": "smtp.exmail.qq.com",
     "SMTP_PORT": 465,
-    "EMAIL_USER": "liujz@dunhefund.com",
-    "EMAIL_PASS": "cYT6xks26ERPZbcf",
+    "EMAIL_USER": "yangjy@dunhefund.com",
+    "EMAIL_PASS": "PWsRhbFz9PPTPD9V",
     "EMAIL_TO": [
         "yangjy@dunhefund.com",
         "jiangl@dunhefund.com",

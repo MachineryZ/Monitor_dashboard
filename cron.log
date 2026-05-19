@@ -1,0 +1,396 @@
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+bash: SCRIPT_DIR/stop_all.sh: No such file or directory
+Starting dashboard scripts...
+Traceback (most recent call last):
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+    from streamlit.cli import main
+    from streamlit.cli import main
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+ModuleNotFoundError: No module named 'streamlit.cli'
+ModuleNotFoundError: No module named 'streamlit.cli'
+ModuleNotFoundError: No module named 'streamlit.cli'
+Starting monitoring scripts...
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+bash: SCRIPT_DIR/stop_all.sh: No such file or directory
+Starting dashboard scripts...
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+bash: SCRIPT_DIR/stop_all.sh: No such file or directory
+Starting dashboard scripts...
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+bash: SCRIPT_DIR/stop_all.sh: No such file or directory
+Starting dashboard scripts...
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+ModuleNotFoundError: No module named 'streamlit.cli'
+Starting monitoring scripts...
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+bash: SCRIPT_DIR/stop_all.sh: No such file or directory
+Starting dashboard scripts...
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+bash: SCRIPT_DIR/stop_all.sh: No such file or directory
+Starting dashboard scripts...
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+All processes restarted successfully
+Stopping all dashboard and monitoring processes...
+Stopping streamlit process on port 1024 (PID: 615929)
+Stopping streamlit process on port 1025 (PID: 615930)
+Stopping streamlit process on port 2001 (PID: 615931)
+Stopping streamlit process on port 2002 (PID: 615932)
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Starting dashboard scripts...
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_all.py
+Error: Invalid value: File does not exist: cf_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_all.py
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+All processes restarted successfully
+Stopping all dashboard and monitoring processes...
+Stopping streamlit process on port 1025 (PID: 2821046)
+Stopping streamlit process on port 2001 (PID: 2821047)
+Stopping streamlit process on port 2002 (PID: 2821048)
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+/home/victor/code/monitor_dashboard
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Starting dashboard scripts...
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_position.py
+Error: Invalid value: File does not exist: if_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_position.py
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+Stopping all dashboard and monitoring processes...
+Stopping streamlit process on port 1024 (PID: 546465)
+Stopping streamlit process on port 1025 (PID: 546466)
+Stopping streamlit process on port 2001 (PID: 546467)
+Stopping streamlit process on port 2002 (PID: 546468)
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+/home/victor/code/monitor_dashboard
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Starting dashboard scripts...
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_position.py
+Error: Invalid value: File does not exist: if_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_all.py
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+/home/victor/code/monitor_dashboard
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Starting dashboard scripts...
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_all.py
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+Stopping all dashboard and monitoring processes...
+Stopping remaining streamlit processes (PIDs: 893442
+893443
+893444
+893445)
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+/home/victor/code/monitor_dashboard
+Stopping all dashboard and monitoring processes...
+Stopping remaining streamlit processes (PIDs: 893442
+893443
+893444
+893445)
+All processes stopped.
+Starting dashboard scripts...
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_all.py
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+Stopping all dashboard and monitoring processes...
+Stopping remaining streamlit processes (PIDs: 893442
+893443
+893444
+893445)
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+/home/victor/code/monitor_dashboard
+Stopping all dashboard and monitoring processes...
+Stopping remaining streamlit processes (PIDs: 893442
+893443
+893444
+893445)
+All processes stopped.
+Starting dashboard scripts...
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_all.py
+Error: Invalid value: File does not exist: cf_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_position.py
+Starting monitoring scripts...
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+/home/victor/code/monitor_dashboard
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Starting dashboard scripts...
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: cf_position.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_all.py
+Usage: streamlit run [OPTIONS] [TARGET] [ARGS]...
+Try 'streamlit run --help' for help.
+
+Error: Invalid value: File does not exist: if_position.py
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+All processes restarted successfully
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+Stopping all dashboard and monitoring processes...
+Stopping streamlit process on port 1024 (PID: 1793647)
+Stopping streamlit process on port 1025 (PID: 1793648)
+Stopping streamlit process on port 2001 (PID: 1793649)
+Stopping streamlit process on port 2002 (PID: 1793650)
+All processes stopped.
+Restarting all dashboard and monitoring processes ...
+/home/victor/code/monitor_dashboard
+Stopping all dashboard and monitoring processes...
+All processes stopped.
+Starting dashboard scripts...
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Traceback (most recent call last):
+  File "/opt/anaconda3/bin/streamlit", line 7, in <module>
+    from streamlit.cli import main
+ModuleNotFoundError: No module named 'streamlit.cli'
+Starting monitoring scripts...
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 1: python: command not found
+/home/victor/code/monitor_dashboard/run_update_check.sh: line 2: python: command not found
+All processes restarted successfully

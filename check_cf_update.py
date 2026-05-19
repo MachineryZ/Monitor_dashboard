@@ -34,14 +34,13 @@ NIGHT_SESSIONS = [
 EMAIL_CONFIG = {
     "SMTP_SERVER": "smtp.exmail.qq.com",
     "SMTP_PORT": 465,
-    "EMAIL_USER": "liujz@dunhefund.com",
-    "EMAIL_PASS": "cYT6xks26ERPZbcf",
+    "EMAIL_USER": "yangjy@dunhefund.com",
+    "EMAIL_PASS": "PWsRhbFz9PPTPD9V",
     "EMAIL_TO": [
         "yangjy@dunhefund.com",
         "jiangl@dunhefund.com",
         "zhoujg@dunhefund.com",
-        "xuh@dunhefund.com",
-        "zhangzhizuo@dunhefund.com"
+        "xuh@dunhefund.com"
     ]
 }
 
@@ -101,14 +100,6 @@ def is_in_trading_hours():
     else:
         return False
 
-def should_skip_cf_check_monday():
-    """
-    Mondays' early night session runs on Friday night; no need to run commodity
-    update check on Monday (avoids False alarm from stale file).
-    """
-    return datetime.now().weekdy() == 0
-
-
 def prepare_html():
 
     html = f"{ datetime.datetime.now().strftime('%H:%M:%S')} 商品期货文件超过6min未更新!"
@@ -137,7 +128,7 @@ if __name__ == '__main__':
     
     alert_triggered = False
     while True:
-        if is_in_trading_hours() and not should_skip_cf_check_monday():
+        if is_in_trading_hours():
 
             prev_today, today, next_day = get_date_from_calendar()
             current_time = datetime.datetime.now().time()

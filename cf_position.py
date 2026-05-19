@@ -6,6 +6,7 @@ import streamlit as st
 
 import datetime
 import bisect
+from clickhouse_connect.driver import create_client
 
 calendar_path = "/cpfs/intrastats/calendar"
 
@@ -52,6 +53,17 @@ def dashboard(
                             "cncf_melt_position","cncf_melt_position_diff",
                             "night_trading_hours"]
     
+    client = create_client(
+        host='10.51.4.21',
+        port=8123,
+        username='bryant',
+        password='123456',
+        database='commodity_meta',
+    )
+    TABLE_NAME = "commodity_meta.non_tradable_contract"
+    sql = f"SELECT * FROM {TABLE_NAME} LIMIT 100"
+    non_tradable_contract = client.query_df(sql)
+    n_cols = first_row_df.shape[0]
     while True:
         if os.path.exists(file_path):
             try:
@@ -66,9 +78,17 @@ def dashboard(
                 select_df = df[ df['step'].isin(select_steps)].copy()
                 
                 select_df['code'] = select_df['instrument'].str.extract(r'(^[a-zA-Z]+)')
-                
+                for n in n_cols:
+                    df = non_tradable_contract.iloc[n]
+                    if today_date >= df["start_date"] and today_date <= df["end_date"]:
+                        select_df = select_df[
+                            (select_df["instrument"] != df["instrument_id"])
+                        ]
                 select_df = select_df.merge(info_df, how='left', on = 'code')
-                
+                today_date = int(datetime.datetime.now().date().strftime("%Y%m%d"))
+                select_df = select_df[
+                    (select_df['trade_date'] == today_date)
+                ]
                 select_df = select_df.sort_values(by=["instrument", "step"], ascending=False).reset_index(drop=True)
                 select_df = select_df.rename(columns={"instrument": "main_contract"})
                 
