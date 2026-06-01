@@ -5,6 +5,7 @@
 /opt/anaconda3/bin/streamlit run if_position.py --server.headless true --browser.gatherUsageStats false --server.port 2002 &
 
 
-/opt/anaconda3/bin/streamlit run cncf_overall.py --server.headless true --browser.gatherUsageStats false --server.port 2222
+/opt/anaconda3/bin/streamlit run /home/victor/code/monitor_dashboard/cncfif_overall.py --server.headless true --browser.gatherUsageStats false --server.port 2222
+/opt/anaconda3/bin/streamlit run /home/victor/code/monitor_dashboard/cncfif_overall_test.py --server.headless true --browser.gatherUsageStats false --server.port 2223
 
 
