@@ -56,28 +56,28 @@ PRODUCT_CONFIGS = [
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,
+        "init_capital": 25000000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
         "product_name": "jz1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 110000000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
         "product_name": "ly1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 25000000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
         "product_name": "zz1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 26240000,
     },
 ]
 
@@ -446,6 +446,7 @@ def calculate_product(
 
         # Per-instrument margin (use absolute position for sizing)
         inst_margin = price * total_pos * multiplier * margin_ratio
+        print(f"inst_margin {inst_margin} price {price} total_pos {total_pos} multiplier {multiplier} margin_ratio {margin_ratio}")
         instrument_margin_max = max(inst_margin, instrument_margin_max)
 
         # Last trade time
@@ -682,7 +683,8 @@ def dashboard():
 
                 # Summary table
                 st.subheader("Overview")
-                st.dataframe(styled_df, use_container_width=True)
+                # st.dataframe(styled_df, use_container_width=True)
+                st.dataframe(styled_df, width="stretch")
 
                 # Detail tables (one expander per product)
                 st.markdown("---")
@@ -708,7 +710,8 @@ def dashboard():
                             "单合约保证金", "交易所", "最后成交时间",
                         ][:len(display_ddf.columns)]
 
-                        st.dataframe(display_ddf, use_container_width=True)
+                        # st.dataframe(display_ddf, use_container_width=True)
+                        st.dataframe(display_ddf, width="content")
 
                         # Show per-instrument warnings if any
                         if "_warnings" in ddf.columns:
