@@ -14,21 +14,16 @@ import streamlit as st
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
 
 # Price cache: { instrument_id -> last known price }
-# Populated at startup from pre_settlement_price, updated each tick.
 _price_cache: dict[str, float] = {}
 
 # ── Market-open time windows ──────────────────
-# commodity: morning 09:00, evening 21:00
-# futures  : morning 09:30  (no evening session)
 COMMODITY_MORNING_OPEN  = datetime.time(9,  0)
 FUTURES_MORNING_OPEN    = datetime.time(9, 30)
-MORNING_CLOSE           = datetime.time(15, 15)   # both close ~15:00-15:15
+MORNING_CLOSE           = datetime.time(15, 15)
 EVENING_OPEN            = datetime.time(21, 0)
-EVENING_CLOSE_NEXT_DAY  = datetime.time(2, 30)    # crosses midnight
+EVENING_CLOSE_NEXT_DAY  = datetime.time(2, 30)
 
 # ── Product registry ──────────────────────────
-# Each entry:
-#   path, broker, product_name, futures_type, init_capital (0 = use pre_balance)
 PRODUCT_CONFIGS = [
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
@@ -56,28 +51,28 @@ PRODUCT_CONFIGS = [
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 25000000,
+        "init_capital": 0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
         "product_name": "jz1h",
         "futures_type": "futures",
-        "init_capital": 110000000,
+        "init_capital": 0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
         "product_name": "ly1h",
         "futures_type": "futures",
-        "init_capital": 25000000,
+        "init_capital": 0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
         "product_name": "zz1h",
         "futures_type": "futures",
-        "init_capital": 26240000,
+        "init_capital": 0,
     },
 ]
 
@@ -97,14 +92,10 @@ def get_date_from_calendar():
 def is_market_open(futures_type: str) -> bool:
     """
     Returns True when the market for this futures_type is expected to be open.
-
-    Commodity:  09:00-15:15  and  21:00-02:30(+1)
-    Futures:    09:30-15:15  only
     """
     now = datetime.datetime.now()
     t   = now.time()
 
-    # Morning session
     if futures_type == "commodity":
         in_morning = COMMODITY_MORNING_OPEN <= t <= MORNING_CLOSE
     else:
@@ -113,11 +104,8 @@ def is_market_open(futures_type: str) -> bool:
     if in_morning:
         return True
 
-    # Evening session – commodity only, spans midnight
     if futures_type == "commodity":
-        # Before midnight: 21:00 → 23:59
         in_evening_before_midnight = t >= EVENING_OPEN
-        # After midnight:  00:00 → 02:30
         in_evening_after_midnight  = t <= EVENING_CLOSE_NEXT_DAY
         if in_evening_before_midnight or in_evening_after_midnight:
             return True
@@ -125,13 +113,26 @@ def is_market_open(futures_type: str) -> bool:
     return False
 
 
+def get_previous_trade_date(current_date: int) -> int:
+    """
+    Returns the previous trading date from the calendar.
+    """
+    try:
+        date_list = np.loadtxt(CALENDAR_PATH, dtype=np.int64, ndmin=1)
+        pos = np.searchsorted(date_list, current_date, side="left")
+        if pos > 0:
+            return int(date_list[pos - 1])
+    except Exception:
+        pass
+    # Fallback: subtract 1 day
+    d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
+    d -= datetime.timedelta(days=1)
+    return int(d.strftime("%Y%m%d"))
+
+
 def safe_read_csv(filepath: str) -> tuple[pd.DataFrame | None, str | None]:
     """
     Returns (dataframe, error_message).
-    - File missing       → (None, "File not found: ...")
-    - File fully empty   → (None, "File is empty: ...")
-    - Only header row    → (empty DataFrame with columns, None)   ← treated as normal
-    - Normal             → (DataFrame, None)
     """
     if not os.path.exists(filepath):
         return None, f"File not found: {filepath}"
@@ -139,7 +140,6 @@ def safe_read_csv(filepath: str) -> tuple[pd.DataFrame | None, str | None]:
         return None, f"File is completely empty (0 bytes): {filepath}"
     try:
         df = pd.read_csv(filepath)
-        # File with header only → 0 data rows, but that is OK
         return df, None
     except Exception as e:
         return None, f"CSV parse error [{filepath}]: {e}"
@@ -192,9 +192,8 @@ def send_alert(message: str):
 
 def init_price_cache(futures_type: str, current_date: int):
     """
-    Called once at startup (or when cache is empty).
-    Seeds _price_cache with pre_settlement_price from the position file
-    for every product config of the given futures_type.
+    Called once at startup.
+    Seeds _price_cache with pre_settlement_price from the position file.
     """
     for cfg in PRODUCT_CONFIGS:
         if cfg["futures_type"] != futures_type:
@@ -214,7 +213,6 @@ def init_price_cache(futures_type: str, current_date: int):
 def update_price_cache(future_df: pd.DataFrame):
     """
     Replaces cached prices with the latest mid-price from the market data snapshot.
-    Called every refresh cycle after the market file is loaded.
     """
     if future_df is None or future_df.empty:
         return
@@ -230,7 +228,6 @@ def update_price_cache(future_df: pd.DataFrame):
 
 
 def get_price(instrument: str) -> float | None:
-    """Return cached price or None if unknown."""
     return _price_cache.get(instrument)
 
 
@@ -275,7 +272,7 @@ SUMMARY_COLS = [
     "balance", "pre_balance", "market_value",
     "cost", "abs_return", "pnl",
     "instrument_margin_uplimit", "product_low_limit",
-    "deposit_withdraw", "time", "warnings",
+    "deposit_withdraw", "time", "warnings", "is_market_open",
 ]
 
 DEFAULT_SUMMARY = {
@@ -294,6 +291,7 @@ DEFAULT_SUMMARY = {
     "deposit_withdraw": 0,
     "time": "",
     "warnings": "",
+    "is_market_open": False,
 }
 
 
@@ -304,15 +302,17 @@ def calculate_product(
     futures_type: str,
     init_capital: float,
     current_date: int,
-    # Shared dataframes (pre-loaded outside to avoid redundant I/O)
+    market_open: bool,
     shared_sd_df: pd.DataFrame | None,
     shared_future_df: pd.DataFrame | None,
     shared_margin_df: pd.DataFrame | None,
 ) -> tuple[dict, pd.DataFrame | None]:
     """
-    Returns:
-        summary_row : dict  (one row for the overview table)
-        detail_df   : pd.DataFrame | None  (per-instrument breakdown)
+    Returns (summary_row, detail_df).
+    
+    If not market_open:
+      - Load previous day's data for display
+      - Disable alerts
     """
     warnings_list: list[str] = []
     data = dict(DEFAULT_SUMMARY)
@@ -321,16 +321,23 @@ def calculate_product(
     data["broker"]        = broker
     data["init_capital"]  = init_capital
     data["time"]          = datetime.datetime.now().strftime("%H:%M:%S")
+    data["is_market_open"] = market_open
+
+    # ── Select date: current or previous ──────────────────
+    data_date = current_date
+    if not market_open:
+        # Use previous trading day's data
+        data_date = get_previous_trade_date(current_date)
+        data["time"] = f"{data['time']} (prev day data)"
 
     # ── 1. account_info ──────────────────────────────────────
-    ai_path = os.path.join(path, f"account_info_{current_date}.csv")
+    ai_path = os.path.join(path, f"account_info_{data_date}.csv")
     ai_df, ai_err = safe_read_csv(ai_path)
     if ai_err:
         warnings_list.append(ai_err)
         data["warnings"] = " | ".join(warnings_list)
         return data, None
     if ai_df.empty:
-        # header-only file → default zeros
         warnings_list.append(f"Header-only file (using defaults): {ai_path}")
         balance     = 0.0
         pre_balance = 0.0
@@ -350,7 +357,7 @@ def calculate_product(
     data["cost"]             = fee
 
     # ── 2. position_data ─────────────────────────────────────
-    pd_path = os.path.join(path, f"position_data_{current_date}.csv")
+    pd_path = os.path.join(path, f"position_data_{data_date}.csv")
     pd_df, pd_err = safe_read_csv(pd_path)
     if pd_err:
         warnings_list.append(pd_err)
@@ -377,13 +384,13 @@ def calculate_product(
     data["pnl"] = f"{pnl:.3f}%"
 
     # ── 4. Static info (shared) ───────────────────────────────
-    sd_df = shared_sd_df  # may be None
+    sd_df = shared_sd_df
 
-    # ── 5. Market data (shared, possibly sparse due to night session) ─
-    future_df = shared_future_df  # may be None or sparse
+    # ── 5. Market data (shared) ──────────────────────────────
+    future_df = shared_future_df
 
     # ── 6. Margin file (shared) ───────────────────────────────
-    margin_df = shared_margin_df  # may be None
+    margin_df = shared_margin_df
 
     # ── 7. Per-instrument calculations ───────────────────────
     market_value          = 0.0
@@ -393,7 +400,7 @@ def calculate_product(
     instruments = pd_df["instrument_id"].dropna().unique().tolist() if not pd_df.empty else []
 
     # Load trade file for last-trade-time lookup
-    trade_path = get_trade_file_path(path, current_date)
+    trade_path = get_trade_file_path(path, data_date)
     trade_df, trade_err = safe_read_csv(trade_path)
     if trade_err:
         warnings_list.append(trade_err)
@@ -402,19 +409,16 @@ def calculate_product(
     for inst in instruments:
         inst_warnings: list[str] = []
 
-        # Position (net: LONG positive, SHORT negative)
         long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
         short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
         long_pos  = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
         short_pos = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
-        net_pos   = long_pos - short_pos   # display as signed int
+        net_pos   = long_pos - short_pos
 
-        # close_profit & position_profit per instrument
         cp = float(pd_df[pd_df["instrument_id"] == inst]["close_profit"].fillna(0).sum())
         pp = float(pd_df[pd_df["instrument_id"] == inst]["position_profit"].fillna(0).sum())
         total_pnl = cp + pp
 
-        # Multiplier
         multiplier = 1.0
         exchange   = ""
         if sd_df is not None and not sd_df.empty:
@@ -427,29 +431,23 @@ def calculate_product(
         else:
             inst_warnings.append(f"static info file unavailable for {inst}")
 
-        # Margin ratio
         margin_ratio = 0.0
         if margin_df is not None and not margin_df.empty:
             m_row = margin_df[margin_df["instrument"] == inst]
             if not m_row.empty:
                 margin_ratio = float(m_row["margin_ratio"].iloc[0])
 
-        # Price (from cache – updated from market file each cycle)
         price = get_price(inst)
         if price is None:
             inst_warnings.append(f"no price available for {inst} (using 0)")
             price = 0.0
 
-        # Market value contribution
         total_pos = long_pos + short_pos
         market_value += total_pos * price * multiplier
 
-        # Per-instrument margin (use absolute position for sizing)
         inst_margin = price * total_pos * multiplier * margin_ratio
-        print(f"inst_margin {inst_margin} price {price} total_pos {total_pos} multiplier {multiplier} margin_ratio {margin_ratio}")
         instrument_margin_max = max(inst_margin, instrument_margin_max)
 
-        # Last trade time
         last_trade_time = ""
         if trade_df is not None and not trade_df.empty:
             t_rows = trade_df[trade_df.get("instrument_id", trade_df.get("instrument", pd.Series())) == inst]
@@ -485,38 +483,36 @@ def calculate_product(
 
 
 # ─────────────────────────────────────────────
-# SHARED FILE LOADER  (load once per cycle)
+# SHARED FILE LOADER
 # ─────────────────────────────────────────────
 
 def load_shared_files(
     futures_type: str,
     path: str,
     current_date: int,
+    market_open: bool,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str]]:
     """
     Returns (sd_df, future_df, margin_df, file_errors).
-    Errors are strings suitable for display in the dashboard.
+    If not market_open, load previous date's data.
     """
     errors: list[str] = []
+    data_date = current_date if market_open else get_previous_trade_date(current_date)
 
-    # static info
     sd_path  = get_static_info_path(futures_type)
     sd_df, e = safe_read_csv(sd_path)
     if e:
         errors.append(e)
 
-    # market data
-    mkt_path   = get_market_data_path(futures_type, current_date)
+    mkt_path   = get_market_data_path(futures_type, data_date)
     future_df, e = safe_read_csv(mkt_path)
     if e:
         errors.append(e)
     else:
-        # Update price cache regardless of session hours
         update_price_cache(future_df)
 
-    # margin
-    margin_path   = get_margin_file_path(path, futures_type, current_date)
-    margin_df, e  = safe_read_csv(margin_path) if margin_path else (None, "No margin path configured")
+    margin_path   = get_margin_file_path(path, futures_type, data_date)
+    margin_df, e  = safe_read_csv(margin_path) if margin_path else (None, None)
     if e:
         errors.append(e)
 
@@ -530,7 +526,6 @@ def load_shared_files(
 def dashboard():
     st.set_page_config(page_title="Futures Monitor Dashboard", layout="wide")
 
-    # ── Seed price cache at startup ───────────────────────────
     try:
         current_date, _ = get_date_from_calendar()
         init_price_cache("commodity", current_date)
@@ -545,55 +540,36 @@ def dashboard():
             current_date, _ = get_date_from_calendar()
             now = datetime.datetime.now()
 
-            # ── Summary table accumulator ──────────────────────
             summary_rows: list[dict]      = []
-            detail_map:   dict[str, pd.DataFrame] = {}  # product_name → detail_df
+            detail_map:   dict[str, tuple] = {}
             global_file_errors: list[str] = []
 
-            # Pre-load shared files per futures_type to avoid reading the same
-            # market/static files once per product.
-            shared_cache: dict[str, tuple] = {}  # futures_type → (sd, future, margin, errors)
+            shared_cache: dict[str, tuple] = {}
 
             for cfg in PRODUCT_CONFIGS:
                 ft   = cfg["futures_type"]
                 path = cfg["path"]
                 name = cfg["product_name"]
 
-                # ── Opening-hours guard ────────────────────────
-                if not is_market_open(ft):
-                    # Still show the row but mark it as pre-market
-                    row = dict(DEFAULT_SUMMARY)
-                    row.update({
-                        "futures_type": "cncf" if ft == "commodity" else "cnif",
-                        "product_name": name,
-                        "broker":       cfg["broker"],
-                        "init_capital": cfg["init_capital"],
-                        "time":         now.strftime("%H:%M:%S"),
-                        "warnings":     "Market not open yet",
-                    })
-                    summary_rows.append(row)
-                    continue
+                # ── Check if market is open ─────────────────────
+                market_open = is_market_open(ft)
 
-                # ── Load shared files (once per futures_type) ──
-                # For commodity, margin_df varies per product path → load per product.
-                # For futures,   margin_df also varies per path    → load per product.
-                # sd_df and future_df are shared per futures_type.
+                # ── Load shared files ───────────────────────────
                 if ft not in shared_cache:
                     sd_df, future_df, _dummy_margin, errs = load_shared_files(
-                        ft, path, current_date
+                        ft, path, current_date, market_open
                     )
                     shared_cache[ft] = (sd_df, future_df, errs)
                     global_file_errors.extend(errs)
 
                 sd_df, future_df, _shared_errs = shared_cache[ft]
 
-                # Load margin per product (path-specific for futures)
                 margin_path  = get_margin_file_path(path, ft, current_date)
                 margin_df, m_err = safe_read_csv(margin_path) if margin_path else (None, None)
                 if m_err:
                     global_file_errors.append(m_err)
 
-                # ── Calculate ─────────────────────────────────
+                # ── Calculate ───────────────────────────────────
                 try:
                     row, detail_df = calculate_product(
                         path          = path,
@@ -602,6 +578,7 @@ def dashboard():
                         futures_type  = ft,
                         init_capital  = cfg["init_capital"],
                         current_date  = current_date,
+                        market_open   = market_open,
                         shared_sd_df      = sd_df,
                         shared_future_df  = future_df,
                         shared_margin_df  = margin_df,
@@ -615,6 +592,7 @@ def dashboard():
                         "init_capital": cfg["init_capital"],
                         "time":         now.strftime("%H:%M:%S"),
                         "warnings":     f"Calculation error: {calc_err}",
+                        "is_market_open": market_open,
                     })
                     detail_df = None
 
@@ -622,22 +600,23 @@ def dashboard():
                 if detail_df is not None:
                     detail_map[name] = (cfg, detail_df)
 
-                # ── Alert checks ───────────────────────────────
-                try:
-                    pll = float(row["product_low_limit"])
-                    imu = float(row["instrument_margin_uplimit"])
-                    if pll < 0.8:
-                        send_alert(
-                            f"[ALERT] product_low_limit < 0.8 | "
-                            f"broker={row['broker']} product={name} time={row['time']}"
-                        )
-                    if imu > 0.25:
-                        send_alert(
-                            f"[ALERT] instrument_margin_uplimit > 0.25 | "
-                            f"broker={row['broker']} product={name} time={row['time']}"
-                        )
-                except (ValueError, TypeError):
-                    pass
+                # ── Alert checks (ONLY if market is open) ──────
+                if market_open:
+                    try:
+                        pll = float(row["product_low_limit"])
+                        imu = float(row["instrument_margin_uplimit"])
+                        if pll < 0.8:
+                            send_alert(
+                                f"[ALERT] product_low_limit < 0.8 | "
+                                f"broker={row['broker']} product={name} time={row['time']}"
+                            )
+                        if imu > 0.25:
+                            send_alert(
+                                f"[ALERT] instrument_margin_uplimit > 0.25 | "
+                                f"broker={row['broker']} product={name} time={row['time']}"
+                            )
+                    except (ValueError, TypeError):
+                        pass
 
             # ── Build summary DataFrame ────────────────────────
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
@@ -656,8 +635,11 @@ def dashboard():
                 df["product_low_limit"], errors="coerce"
             ).fillna(0).apply(lambda x: f"{x:.4f}")
 
+            # Hide is_market_open from display (used internally)
+            display_df = df.drop(columns=["is_market_open"])
+
             styled_df = (
-                df.style
+                display_df.style
                   .map(style_product_low_limit,        subset=["product_low_limit"])
                   .map(style_instrument_margin_uplimit, subset=["instrument_margin_uplimit"])
             )
@@ -674,19 +656,22 @@ def dashboard():
                     unsafe_allow_html=True,
                 )
 
-                # Global file error banner
                 if global_file_errors:
                     st.error(
                         "**Missing / unreadable files:**\n\n"
                         + "\n\n".join(f"- {e}" for e in global_file_errors)
                     )
 
-                # Summary table
                 st.subheader("Overview")
-                # st.dataframe(styled_df, use_container_width=True)
-                st.dataframe(styled_df, width="stretch")
+                st.dataframe(styled_df, use_container_width=True)
 
-                # Detail tables (one expander per product)
+                # ── Summary Table ───────────────────────────────
+                st.markdown("---")
+                st.subheader("Trading Summary")
+                summary_table = build_summary_table(df)
+                st.dataframe(summary_table, use_container_width=True)
+
+                # ── Per-Instrument Detail ───────────────────────
                 st.markdown("---")
                 st.subheader("Per-Instrument Detail")
 
@@ -703,17 +688,14 @@ def dashboard():
                         ]
                         display_ddf = ddf[[c for c in display_cols if c in ddf.columns]].copy()
 
-                        # Rename columns to Chinese / readable labels
                         display_ddf.columns = [
                             "合约名称", "持仓(+多/-空)",
                             "平仓盈亏", "持仓盈亏", "总盈亏",
                             "单合约保证金", "交易所", "最后成交时间",
                         ][:len(display_ddf.columns)]
 
-                        # st.dataframe(display_ddf, use_container_width=True)
-                        st.dataframe(display_ddf, width="content")
+                        st.dataframe(display_ddf, use_container_width=True)
 
-                        # Show per-instrument warnings if any
                         if "_warnings" in ddf.columns:
                             inst_warns = ddf[ddf["_warnings"].str.len() > 0]
                             if not inst_warns.empty:
@@ -727,6 +709,107 @@ def dashboard():
                 st.error(f"Dashboard loop error: {outer_err}")
 
         time.sleep(1)
+
+
+# ─────────────────────────────────────────────
+# BUILD SUMMARY TABLE (New Requirement #2)
+# ─────────────────────────────────────────────
+
+def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Builds a summary table with:
+      - summary: "cncf", "cnif", "cn_all"
+      - aum: sum of init_capital / pre_balance
+      - cost: sum of cost
+      - abs_return: sum of abs_return
+      - total_pnl: abs_return - cost
+      - pnl: (total_pnl / aum) * 100
+    """
+    summary_rows = []
+
+    # Extract numeric values
+    df_numeric = df.copy()
+    for col in ["balance", "pre_balance", "init_capital", "cost", "abs_return", "market_value"]:
+        if col in df_numeric.columns:
+            df_numeric[col] = pd.to_numeric(
+                df_numeric[col].astype(str).str.replace(",", ""),
+                errors="coerce"
+            ).fillna(0)
+
+    pnl_values = pd.to_numeric(
+        df_numeric["pnl"].astype(str).str.rstrip("%"),
+        errors="coerce"
+    ).fillna(0)
+
+    # ── CNCF (commodity) ────────────────────────
+    cncf_mask = df_numeric["futures_type"] == "cncf"
+    cncf_data = df_numeric[cncf_mask]
+
+    if not cncf_data.empty:
+        cncf_aum = cncf_data["init_capital"].sum()
+        if cncf_aum == 0:
+            cncf_aum = cncf_data["pre_balance"].sum()
+        cncf_cost = cncf_data["cost"].sum()
+        cncf_abs_return = cncf_data["abs_return"].sum()
+        cncf_total_pnl = cncf_abs_return - cncf_cost
+        cncf_pnl_pct = (cncf_total_pnl / cncf_aum * 100) if cncf_aum > 0 else 0.0
+
+        summary_rows.append({
+            "summary": "cncf",
+            "aum": int(cncf_aum),
+            "cost": int(cncf_cost),
+            "abs_return": int(cncf_abs_return),
+            "total_pnl": int(cncf_total_pnl),
+            "pnl": f"{cncf_pnl_pct:.3f}%",
+        })
+
+    # ── CNIF (futures) ─────────────────────────
+    cnif_mask = df_numeric["futures_type"] == "cnif"
+    cnif_data = df_numeric[cnif_mask]
+
+    if not cnif_data.empty:
+        cnif_aum = cnif_data["init_capital"].sum()
+        if cnif_aum == 0:
+            cnif_aum = cnif_data["pre_balance"].sum()
+        cnif_cost = cnif_data["cost"].sum()
+        cnif_abs_return = cnif_data["abs_return"].sum()
+        cnif_total_pnl = cnif_abs_return - cnif_cost
+        cnif_pnl_pct = (cnif_total_pnl / cnif_aum * 100) if cnif_aum > 0 else 0.0
+
+        summary_rows.append({
+            "summary": "cnif",
+            "aum": int(cnif_aum),
+            "cost": int(cnif_cost),
+            "abs_return": int(cnif_abs_return),
+            "total_pnl": int(cnif_total_pnl),
+            "pnl": f"{cnif_pnl_pct:.3f}%",
+        })
+
+    # ── ALL (cn_all) ───────────────────────────
+    all_aum = df_numeric["init_capital"].sum()
+    if all_aum == 0:
+        all_aum = df_numeric["pre_balance"].sum()
+    all_cost = df_numeric["cost"].sum()
+    all_abs_return = df_numeric["abs_return"].sum()
+    all_total_pnl = all_abs_return - all_cost
+    all_pnl_pct = (all_total_pnl / all_aum * 100) if all_aum > 0 else 0.0
+
+    summary_rows.append({
+        "summary": "cn_all",
+        "aum": int(all_aum),
+        "cost": int(all_cost),
+        "abs_return": int(all_abs_return),
+        "total_pnl": int(all_total_pnl),
+        "pnl": f"{all_pnl_pct:.3f}%",
+    })
+
+    summary_df = pd.DataFrame(summary_rows)
+
+    # Format aum, cost, abs_return, total_pnl with thousand separator
+    for col in ["aum", "cost", "abs_return", "total_pnl"]:
+        summary_df[col] = summary_df[col].apply(lambda x: f"{x:,}")
+
+    return summary_df
 
 
 # ─────────────────────────────────────────────
