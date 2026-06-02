@@ -270,7 +270,7 @@ SUMMARY_COLS = [
     "futures_type", "product_name", "broker",
     "init_capital",
     "balance", "pre_balance", "market_value",
-    "cost", "abs_return", "pnl",
+    "cost", "abs_return", "pnl_ratio",
     "instrument_margin_uplimit", "product_low_limit",
     "deposit_withdraw", "time", "warnings", "is_market_open",
 ]
@@ -285,7 +285,7 @@ DEFAULT_SUMMARY = {
     "market_value": 0,
     "cost": 0,
     "abs_return": 0,
-    "pnl": "0.000%",
+    "pnl_ratio": "0.000%",
     "instrument_margin_uplimit": 0.0,
     "product_low_limit": 0.0,
     "deposit_withdraw": 0,
@@ -378,10 +378,10 @@ def calculate_product(
     # ── 3. PnL ───────────────────────────────────────────────
     pnl_denominator = init_capital if init_capital > 0 else pre_balance
     if pnl_denominator > 0:
-        pnl = round((data["abs_return"] - fee) / pnl_denominator * 100, 3)
+        pnl_ratio = round((data["abs_return"] - fee) / pnl_denominator * 100, 3)
     else:
-        pnl = 0.0
-    data["pnl"] = f"{pnl:.3f}%"
+        pnl_ratio = 0.0
+    data["pnl_ratio"] = f"{pnl_ratio:.3f}%"
 
     # ── 4. Static info (shared) ───────────────────────────────
     sd_df = shared_sd_df
@@ -655,6 +655,12 @@ def dashboard():
                     """,
                     unsafe_allow_html=True,
                 )
+                # ── Summary Table ───────────────────────────────
+                st.markdown("---")
+                st.subheader("Trading Summary")
+                summary_table = build_summary_table(df)
+                st.dataframe(summary_table, width="stretch")
+                # st.dataframe(summary_table, use_container_width=True)
 
                 if global_file_errors:
                     st.error(
@@ -663,13 +669,9 @@ def dashboard():
                     )
 
                 st.subheader("Overview")
-                st.dataframe(styled_df, use_container_width=True)
+                st.dataframe(styled_df, width="stretch")
+                # st.dataframe(styled_df, use_container_width=True)
 
-                # ── Summary Table ───────────────────────────────
-                st.markdown("---")
-                st.subheader("Trading Summary")
-                summary_table = build_summary_table(df)
-                st.dataframe(summary_table, use_container_width=True)
 
                 # ── Per-Instrument Detail ───────────────────────
                 st.markdown("---")
@@ -694,7 +696,8 @@ def dashboard():
                             "单合约保证金", "交易所", "最后成交时间",
                         ][:len(display_ddf.columns)]
 
-                        st.dataframe(display_ddf, use_container_width=True)
+                        st.dataframe(display_ddf, width="stretch")
+                        # st.dataframe(display_ddf, use_container_width=True)
 
                         if "_warnings" in ddf.columns:
                             inst_warns = ddf[ddf["_warnings"].str.len() > 0]
@@ -723,7 +726,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
       - cost: sum of cost
       - abs_return: sum of abs_return
       - total_pnl: abs_return - cost
-      - pnl: (total_pnl / aum) * 100
+      - pnl_ratio: (total_pnl / aum) * 100
     """
     summary_rows = []
 
@@ -737,7 +740,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             ).fillna(0)
 
     pnl_values = pd.to_numeric(
-        df_numeric["pnl"].astype(str).str.rstrip("%"),
+        df_numeric["pnl_ratio"].astype(str).str.rstrip("%"),
         errors="coerce"
     ).fillna(0)
 
@@ -760,7 +763,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             "cost": int(cncf_cost),
             "abs_return": int(cncf_abs_return),
             "total_pnl": int(cncf_total_pnl),
-            "pnl": f"{cncf_pnl_pct:.3f}%",
+            "pnl_ratio": f"{cncf_pnl_pct:.3f}%",
         })
 
     # ── CNIF (futures) ─────────────────────────
@@ -782,7 +785,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             "cost": int(cnif_cost),
             "abs_return": int(cnif_abs_return),
             "total_pnl": int(cnif_total_pnl),
-            "pnl": f"{cnif_pnl_pct:.3f}%",
+            "pnl_ratio": f"{cnif_pnl_pct:.3f}%",
         })
 
     # ── ALL (cn_all) ───────────────────────────
@@ -800,7 +803,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
         "cost": int(all_cost),
         "abs_return": int(all_abs_return),
         "total_pnl": int(all_total_pnl),
-        "pnl": f"{all_pnl_pct:.3f}%",
+        "pnl_ratio": f"{all_pnl_pct:.3f}%",
     })
 
     summary_df = pd.DataFrame(summary_rows)
