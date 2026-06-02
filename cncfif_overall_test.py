@@ -361,8 +361,15 @@ def calculate_product(
     margin_df = shared_margin_df
 
     # ── 4. Per-instrument calculations ───────────────────────
+    # ----------------------------------------------------------------
+    # FIX: market_value must reflect gross notional (always >= 0).
+    # Using net_pos (long - short) caused negative values whenever the
+    # strategy was net-short.  We now use (long_pos + short_pos), which
+    # is the same quantity already used for product_low_limit, so the
+    # two variables are now consistent.  total_market_value is removed
+    # as a separate accumulator — market_value itself serves both roles.
+    # ----------------------------------------------------------------
     market_value          = 0.0
-    total_market_value    = 0.0  # [新增] 用于 product_low_limit
     instrument_margin_max = 0.0
     detail_rows: list[dict] = []
 
@@ -387,7 +394,7 @@ def calculate_product(
         long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
         short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
 
-        # ── Net position
+        # ── Net position (for display only)
         net_pos = long_pos - short_pos
 
         # ── Dominant position for margin
@@ -427,11 +434,12 @@ def calculate_product(
             inst_warnings.append(f"no price available for {inst} (using 0)")
             price = 0.0
 
-        # ── Market value: use NET position
-        market_value += net_pos * price * multiplier
-
-        # ── Total market value: use TOTAL position (long + short) [新增]
-        total_market_value += (long_pos + short_pos) * price * multiplier
+        # ── Market value: gross notional = (long + short) * price * multiplier
+        # FIX: previously used net_pos (long - short), which gave negative
+        #      values for net-short positions.  Gross notional is always >= 0
+        #      and represents the true capital at risk / exposure size.
+        inst_gross_notional = (long_pos + short_pos) * price * multiplier
+        market_value += inst_gross_notional
 
         # ── Per-instrument margin: use DOMINANT position side
         inst_margin           = price * margin_pos * multiplier * margin_ratio
@@ -469,8 +477,9 @@ def calculate_product(
         })
 
     data["market_value"] = market_value
+    # product_low_limit: gross notional / balance — consistent with market_value above
     data["product_low_limit"] = (
-        total_market_value / balance if balance > 0 else 0.0  # [改] 用 total_market_value
+        market_value / balance if balance > 0 else 0.0
     )
     data["instrument_margin_uplimit"] = (
         instrument_margin_max / balance if balance > 0 else 0.0
