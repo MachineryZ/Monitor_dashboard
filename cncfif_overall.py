@@ -51,28 +51,28 @@ PRODUCT_CONFIGS = [
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,
+        "init_capital": 25000000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
         "product_name": "jz1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 110000000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
         "product_name": "ly1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 94500000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
         "product_name": "zz1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 26240000,
     },
 ]
 
@@ -357,11 +357,12 @@ def calculate_product(
     data["pnl_ratio"] = f"{pnl_ratio:.3f}%"
 
     sd_df     = shared_sd_df
-    future_df = shared_future_df  # noqa: F841 (kept for context, not used directly)
+    future_df = shared_future_df
     margin_df = shared_margin_df
 
     # ── 4. Per-instrument calculations ───────────────────────
     market_value          = 0.0
+    total_market_value    = 0.0  # [新增] 用于 product_low_limit
     instrument_margin_max = 0.0
     detail_rows: list[dict] = []
 
@@ -380,29 +381,24 @@ def calculate_product(
     for inst in instruments:
         inst_warnings: list[str] = []
 
-        # ── Raw positions (both stored as non-negative in source data) ──
+        # ── Raw positions
         long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
         short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
         long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
         short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
 
-        # ── Net position for display: LONG positive, SHORT negative ──────
-        # e.g. long=10, short=3  →  net = +7
-        # e.g. long=0,  short=5  →  net = -5
-        net_pos = long_pos - short_pos                          # [UNCHANGED from before]
+        # ── Net position
+        net_pos = long_pos - short_pos
 
-        # ── Dominant position for margin: max by absolute value ──────────
-        # Rationale: exchange charges margin on the heavier side of a lock.
-        # e.g. long=10, short=3  →  margin_pos = 10  (long dominates)
-        # e.g. long=3,  short=8  →  margin_pos = 8   (short dominates)
-        margin_pos = max(long_pos, short_pos)                   # [CHANGED]
+        # ── Dominant position for margin
+        margin_pos = max(long_pos, short_pos)
 
-        # ── PnL components ───────────────────────────────────────────────
+        # ── PnL components
         cp        = float(pd_df[pd_df["instrument_id"] == inst]["close_profit"].fillna(0).sum())
         pp        = float(pd_df[pd_df["instrument_id"] == inst]["position_profit"].fillna(0).sum())
         total_pnl = cp + pp
 
-        # ── Static info ──────────────────────────────────────────────────
+        # ── Static info
         multiplier = 1.0
         exchange   = ""
         if sd_df is not None and not sd_df.empty:
@@ -418,31 +414,30 @@ def calculate_product(
         else:
             inst_warnings.append(f"static info file unavailable for {inst}")
 
-        # ── Margin ratio ─────────────────────────────────────────────────
+        # ── Margin ratio
         margin_ratio = 0.0
         if margin_df is not None and not margin_df.empty:
             m_row = margin_df[margin_df["instrument"] == inst]
             if not m_row.empty:
                 margin_ratio = float(m_row["margin_ratio"].iloc[0])
 
-        # ── Price (from cache) ────────────────────────────────────────────
+        # ── Price
         price = get_price(inst)
         if price is None:
             inst_warnings.append(f"no price available for {inst} (using 0)")
             price = 0.0
 
-        # ── Market value: use NET position (locked legs cancel out) ───────
-        # net_pos = long_pos - short_pos  (signed)
-        # [CHANGED]: was `long_pos + short_pos`
+        # ── Market value: use NET position
         market_value += net_pos * price * multiplier
 
-        # ── Per-instrument margin: use DOMINANT position side ─────────────
-        # margin_pos = max(long_pos, short_pos)
-        # [CHANGED]: was `long_pos + short_pos`
+        # ── Total market value: use TOTAL position (long + short) [新增]
+        total_market_value += (long_pos + short_pos) * price * multiplier
+
+        # ── Per-instrument margin: use DOMINANT position side
         inst_margin           = price * margin_pos * multiplier * margin_ratio
         instrument_margin_max = max(inst_margin, instrument_margin_max)
 
-        # ── Last trade time ───────────────────────────────────────────────
+        # ── Last trade time
         last_trade_time = ""
         if trade_df is not None and not trade_df.empty:
             inst_col = (
@@ -463,7 +458,7 @@ def calculate_product(
 
         detail_rows.append({
             "instrument":        inst,
-            "position":          int(net_pos),        # signed net position
+            "position":          int(net_pos),
             "close_profit":      round(cp, 2),
             "position_profit":   round(pp, 2),
             "total_pnl":         round(total_pnl, 2),
@@ -475,7 +470,7 @@ def calculate_product(
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
-        market_value / balance if balance > 0 else 0.0
+        total_market_value / balance if balance > 0 else 0.0  # [改] 用 total_market_value
     )
     data["instrument_margin_uplimit"] = (
         instrument_margin_max / balance if balance > 0 else 0.0
@@ -659,7 +654,7 @@ def dashboard():
                 st.markdown("---")
                 st.subheader("Trading Summary")
                 summary_table = build_summary_table(df)
-                st.dataframe(summary_table, use_container_width=True)
+                st.dataframe(summary_table, width="stretch")
 
                 if global_file_errors:
                     st.error(
@@ -668,7 +663,7 @@ def dashboard():
                     )
 
                 st.subheader("Overview")
-                st.dataframe(styled_df, use_container_width=True)
+                st.dataframe(styled_df, width="stretch")
 
                 st.markdown("---")
                 st.subheader("Per-Instrument Detail")
@@ -694,7 +689,7 @@ def dashboard():
                             "单合约保证金", "交易所", "最后成交时间",
                         ][: len(display_ddf.columns)]
 
-                        st.dataframe(display_ddf, use_container_width=True)
+                        st.dataframe(display_ddf, width="stretch")
 
                         if "_warnings" in ddf.columns:
                             inst_warns = ddf[ddf["_warnings"].str.len() > 0]

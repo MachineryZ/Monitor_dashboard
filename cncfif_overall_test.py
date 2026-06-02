@@ -51,28 +51,28 @@ PRODUCT_CONFIGS = [
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,
+        "init_capital": 25000000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
         "product_name": "jz1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 110000000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
         "product_name": "ly1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 94500000,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
         "product_name": "zz1h",
         "futures_type": "futures",
-        "init_capital": 0,
+        "init_capital": 26240000,
     },
 ]
 
@@ -654,7 +654,7 @@ def dashboard():
                 st.markdown("---")
                 st.subheader("Trading Summary")
                 summary_table = build_summary_table(df)
-                st.dataframe(summary_table, use_container_width=True)
+                st.dataframe(summary_table, width="stretch")
 
                 if global_file_errors:
                     st.error(
@@ -663,7 +663,7 @@ def dashboard():
                     )
 
                 st.subheader("Overview")
-                st.dataframe(styled_df, use_container_width=True)
+                st.dataframe(styled_df, width="stretch")
 
                 st.markdown("---")
                 st.subheader("Per-Instrument Detail")
@@ -689,7 +689,7 @@ def dashboard():
                             "单合约保证金", "交易所", "最后成交时间",
                         ][: len(display_ddf.columns)]
 
-                        st.dataframe(display_ddf, use_container_width=True)
+                        st.dataframe(display_ddf, width="stretch")
 
                         if "_warnings" in ddf.columns:
                             inst_warns = ddf[ddf["_warnings"].str.len() > 0]
