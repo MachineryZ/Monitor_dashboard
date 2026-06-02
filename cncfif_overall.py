@@ -24,57 +24,120 @@ EVENING_OPEN           = datetime.time(21,  0)
 EVENING_CLOSE_NEXT_DAY = datetime.time(2,  30)
 
 # ── Product registry ──────────────────────────
+#
+# init_capital 三种模式（按优先级）：
+#
+#   模式 A — 自定义公式（最高优先级）
+#     "aum_formula": lambda pre_balance, balance: <expr>
+#     适用：指增1号商品，公式为 2500万 + (balance - 600万)
+#
+#   模式 B — 乘数模式
+#     "aum_mul": <float>
+#     init_capital = pre_balance * aum_mul
+#     适用：久竹1号(4X)、灵隐1号(5X)、指增1号股指(4.7858X)、安心1号(4X)
+#
+#   模式 C — 绝对值（默认，向后兼容）
+#     "init_capital": <int>
+#     适用：山海金区、山海平衡1号（init_capital=0 → fallback pre_balance）
+#     注意：init_capital=0 且无 aum_mul/aum_formula 时退化为 pre_balance×1
+#
+#   默认值：aum_mul=1.0（即 init_capital = pre_balance）
+#
 PRODUCT_CONFIGS = [
+    # ── 安心1号（cncf, 4X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
         "broker":       "Dongzheng",
         "product_name": "Baguatian (AnXin 1Hao)",
         "futures_type": "commodity",
-        "init_capital": 0,
+        "init_capital": 0,           # 由 aum_mul 动态计算，此字段忽略
+        "aum_mul":      4.0,
     },
+    # ── 山海金区（无特殊乘数，fallback pre_balance）──────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx",
         "broker":       "Zhongxin",
         "product_name": "Shanhai Jinqu",
         "futures_type": "commodity",
-        "init_capital": 0,
+        "init_capital": 0,           # aum_mul 默认 1.0 → pre_balance
     },
+    # ── 山海平衡1号（无特殊乘数，fallback pre_balance）───────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx",
         "broker":       "Zhongxin",
         "product_name": "Shanhai Pingheng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,
+        "init_capital": 0,           # aum_mul 默认 1.0 → pre_balance
     },
+    # ── 指增1号商品（自定义公式：2500万 + (balance - 600万)）─
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 25000000,
+        "init_capital": 0,           # 由 aum_formula 覆盖
+        # 单位：元。2500万=25_000_000，600万=6_000_000
+        "aum_formula":  lambda pb, bal: 25_000_000 + (bal - 6_000_000),
     },
+    # ── 久竹1号（cnif, 4X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
         "product_name": "jz1h",
         "futures_type": "futures",
-        "init_capital": 110000000,
+        "init_capital": 0,           # 由 aum_mul 动态计算
+        "aum_mul":      4.0,
     },
+    # ── 灵隐1号（cnif, 5X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
         "product_name": "ly1h",
         "futures_type": "futures",
-        "init_capital": 94500000,
+        "init_capital": 0,           # 由 aum_mul 动态计算
+        "aum_mul":      5.0,
     },
+    # ── 指增1号股指（cnif, 4.7858X）─────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
         "product_name": "zz1h",
         "futures_type": "futures",
-        "init_capital": 26240000,
+        "init_capital": 0,           # 由 aum_mul 动态计算
+        "aum_mul":      4.7858,
     },
 ]
+
+
+# ─────────────────────────────────────────────
+# AUM RESOLVER
+# ─────────────────────────────────────────────
+
+def resolve_init_capital(cfg: dict, pre_balance: float, balance: float) -> float:
+    """
+    三种模式（按优先级）：
+      1. aum_formula(pre_balance, balance)  — 自定义公式
+      2. pre_balance * aum_mul              — 乘数模式
+      3. cfg["init_capital"]                — 绝对值（0 时退化为 pre_balance）
+    """
+    # 模式 A：自定义公式
+    formula = cfg.get("aum_formula")
+    if formula is not None:
+        return float(formula(pre_balance, balance))
+
+    # 模式 B：乘数模式（aum_mul 存在且不为 1.0，或 init_capital==0 时用 aum_mul）
+    aum_mul = cfg.get("aum_mul")
+    if aum_mul is not None:
+        return float(pre_balance * aum_mul)
+
+    # 模式 C：绝对值
+    ic = float(cfg.get("init_capital", 0))
+    if ic > 0:
+        return ic
+
+    # 最终兜底：直接用 pre_balance（aum_mul=1 的等价形式）
+    return float(pre_balance)
+
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -280,11 +343,11 @@ DEFAULT_SUMMARY = {
 
 
 def calculate_product(
+    cfg: dict,                            # <-- 整个 cfg 传入，供 resolve_init_capital 使用
     path: str,
     broker: str,
     product_name: str,
     futures_type: str,
-    init_capital: float,
     current_date: int,
     market_open: bool,
     shared_sd_df: pd.DataFrame | None,
@@ -297,7 +360,6 @@ def calculate_product(
     data["futures_type"]   = "cncf" if futures_type == "commodity" else "cnif"
     data["product_name"]   = product_name
     data["broker"]         = broker
-    data["init_capital"]   = init_capital
     data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
     data["is_market_open"] = market_open
 
@@ -312,7 +374,8 @@ def calculate_product(
     ai_df, ai_err = safe_read_csv(ai_path)
     if ai_err:
         warnings_list.append(ai_err)
-        data["warnings"] = " | ".join(warnings_list)
+        data["init_capital"] = 0
+        data["warnings"]     = " | ".join(warnings_list)
         return data, None
     if ai_df.empty:
         warnings_list.append(f"Header-only file (using defaults): {ai_path}")
@@ -328,6 +391,11 @@ def calculate_product(
     data["pre_balance"]      = pre_balance
     data["deposit_withdraw"] = deposit - withdraw
     data["cost"]             = fee
+
+    # ── Resolve init_capital (after we have pre_balance & balance) ─
+    # 优先级：aum_formula > aum_mul > init_capital 绝对值 > pre_balance
+    init_capital = resolve_init_capital(cfg, pre_balance, balance)
+    data["init_capital"] = init_capital
 
     # ── 2. position_data ─────────────────────────────────────
     pd_path = os.path.join(path, f"position_data_{data_date}.csv")
@@ -349,9 +417,9 @@ def calculate_product(
     )
 
     # ── 3. PnL ───────────────────────────────────────────────
-    pnl_denominator = init_capital if init_capital > 0 else pre_balance
-    if pnl_denominator > 0:
-        pnl_ratio = round((data["abs_return"] - fee) / pnl_denominator * 100, 3)
+    # 分母统一使用 init_capital（已由 resolve_init_capital 计算完毕）
+    if init_capital > 0:
+        pnl_ratio = round((data["abs_return"] - fee) / init_capital * 100, 3)
     else:
         pnl_ratio = 0.0
     data["pnl_ratio"] = f"{pnl_ratio:.3f}%"
@@ -362,7 +430,6 @@ def calculate_product(
 
     # ── 4. Per-instrument calculations ───────────────────────
     market_value          = 0.0
-    total_market_value    = 0.0  # [新增] 用于 product_low_limit
     instrument_margin_max = 0.0
     detail_rows: list[dict] = []
 
@@ -387,7 +454,7 @@ def calculate_product(
         long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
         short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
 
-        # ── Net position
+        # ── Net position (for display only)
         net_pos = long_pos - short_pos
 
         # ── Dominant position for margin
@@ -427,11 +494,9 @@ def calculate_product(
             inst_warnings.append(f"no price available for {inst} (using 0)")
             price = 0.0
 
-        # ── Market value: use NET position
-        market_value += net_pos * price * multiplier
-
-        # ── Total market value: use TOTAL position (long + short) [新增]
-        total_market_value += (long_pos + short_pos) * price * multiplier
+        # ── Market value: gross notional (long + short) — always >= 0
+        inst_gross_notional = (long_pos + short_pos) * price * multiplier
+        market_value += inst_gross_notional
 
         # ── Per-instrument margin: use DOMINANT position side
         inst_margin           = price * margin_pos * multiplier * margin_ratio
@@ -470,7 +535,7 @@ def calculate_product(
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
-        total_market_value / balance if balance > 0 else 0.0  # [改] 用 total_market_value
+        market_value / balance if balance > 0 else 0.0
     )
     data["instrument_margin_uplimit"] = (
         instrument_margin_max / balance if balance > 0 else 0.0
@@ -563,11 +628,11 @@ def dashboard():
 
                 try:
                     row, detail_df = calculate_product(
+                        cfg              = cfg,        # 传整个 cfg
                         path             = path,
                         broker           = cfg["broker"],
                         product_name     = name,
                         futures_type     = ft,
-                        init_capital     = cfg["init_capital"],
                         current_date     = current_date,
                         market_open      = market_open,
                         shared_sd_df     = sd_df,
@@ -577,12 +642,12 @@ def dashboard():
                 except Exception as calc_err:
                     row = dict(DEFAULT_SUMMARY)
                     row.update({
-                        "futures_type":  "cncf" if ft == "commodity" else "cnif",
-                        "product_name":  name,
-                        "broker":        cfg["broker"],
-                        "init_capital":  cfg["init_capital"],
-                        "time":          now.strftime("%H:%M:%S"),
-                        "warnings":      f"Calculation error: {calc_err}",
+                        "futures_type":   "cncf" if ft == "commodity" else "cnif",
+                        "product_name":   name,
+                        "broker":         cfg["broker"],
+                        "init_capital":   0,
+                        "time":           now.strftime("%H:%M:%S"),
+                        "warnings":       f"Calculation error: {calc_err}",
                         "is_market_open": market_open,
                     })
                     detail_df = None
@@ -635,8 +700,8 @@ def dashboard():
             display_df = df.drop(columns=["is_market_open"])
             styled_df = (
                 display_df.style
-                .map(style_product_low_limit,        subset=["product_low_limit"])
-                .map(style_instrument_margin_uplimit, subset=["instrument_margin_uplimit"])
+                .map(style_product_low_limit,         subset=["product_low_limit"])
+                .map(style_instrument_margin_uplimit,  subset=["instrument_margin_uplimit"])
             )
 
             # ── Render ────────────────────────────────────────────
@@ -720,13 +785,12 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             ).fillna(0)
 
     def _build_row(label: str, subset: pd.DataFrame) -> dict:
-        aum = subset["init_capital"].sum()
-        if aum == 0:
-            aum = subset["pre_balance"].sum()
-        cost        = subset["cost"].sum()
-        abs_return  = subset["abs_return"].sum()
-        total_pnl   = abs_return - cost
-        pnl_pct     = (total_pnl / aum * 100) if aum > 0 else 0.0
+        # aum = 所有产品 init_capital 直接相加（已由 resolve_init_capital 动态计算）
+        aum        = subset["init_capital"].sum()
+        cost       = subset["cost"].sum()
+        abs_return = subset["abs_return"].sum()
+        total_pnl  = abs_return - cost
+        pnl_pct    = (total_pnl / aum * 100) if aum > 0 else 0.0
         return {
             "summary":    label,
             "aum":        int(aum),
