@@ -350,6 +350,63 @@ DEFAULT_SUMMARY = {
 }
 
 
+# ─────────────────────────────────────────────
+# DETERMINE DATA DATE LOGIC
+# ─────────────────────────────────────────────
+
+def get_data_date(futures_type: str, current_date: int) -> tuple[int, str]:
+    """
+    根据期货类型和当前时间，返回应使用的数据日期和时间标注。
+    
+    返回：
+        (data_date, time_label)
+        - data_date: 应读取的文件对应的日期（YYYYMMDD）
+        - time_label: 时间标注字符串，用于显示在 UI 中
+    """
+    now = datetime.datetime.now()
+    t = now.time()
+
+    if futures_type == "commodity":
+        # ── 商品期货逻辑 ──────────────────────────────────
+        # 早盘：09:00 ~ 15:15 → 当天数据
+        if COMMODITY_MORNING_OPEN <= t <= MORNING_CLOSE:
+            return current_date, ""
+        
+        # 下午收盘后到夜盘开盘：15:15 ~ 21:00 → 当天数据（日盘收盘数据）
+        if MORNING_CLOSE < t < EVENING_OPEN:
+            return current_date, "(afternoon, day session data)"
+        
+        # 夜盘：21:00 ~ 02:30 → 当天数据（包括夜盘）
+        if t >= EVENING_OPEN:
+            return current_date, "(night session)"
+        
+        # 夜盘收盘后到早盘前：02:30 ~ 09:00 → 当天数据（夜盘收盘数据）
+        if t < EVENING_CLOSE_NEXT_DAY or t < COMMODITY_MORNING_OPEN:
+            return current_date, "(after night session)"
+    
+    else:
+        # ── 股指期货逻辑 ──────────────────────────────────
+        # 早盘：09:30 ~ 15:15 → 当天数据
+        if FUTURES_MORNING_OPEN <= t <= MORNING_CLOSE:
+            return current_date, ""
+        
+        # 下午收盘后到次日早盘前：15:15 ~ 09:30（跨天）→ 当天数据（日盘收盘数据）
+        if t > MORNING_CLOSE:  # 15:15 之后的全部时间
+            return current_date, "(after market close, day session data)"
+        
+        # 午夜到早盘前：00:00 ~ 09:30 → 昨天数据
+        if t < FUTURES_MORNING_OPEN:
+            prev_date = get_previous_trade_date(current_date)
+            return prev_date, "(before market open, prev day data)"
+    
+    # 兜底（不应该到此）
+    return current_date, ""
+
+
+# ─────────────────────────────────────────────
+# UPDATED calculate_product
+# ─────────────────────────────────────────────
+
 def calculate_product(
     cfg: dict,
     path: str,
@@ -357,7 +414,6 @@ def calculate_product(
     product_name: str,
     futures_type: str,
     current_date: int,
-    market_open: bool,
     shared_sd_df: pd.DataFrame | None,
     shared_future_df: pd.DataFrame | None,
     shared_margin_df: pd.DataFrame | None,
@@ -369,13 +425,22 @@ def calculate_product(
     data["product_name"]   = product_name
     data["broker"]         = broker
     data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
-    data["is_market_open"] = market_open
-
-    # ── Select date ───────────────────────────────────────────
-    data_date = current_date
-    if not market_open:
-        data_date    = get_previous_trade_date(current_date)
-        data["time"] = f"{data['time']} (prev day data)"
+    
+    # ── 修改：使用新的日期判断逻辑 ───────────────────────
+    data_date, time_label = get_data_date(futures_type, current_date)
+    if time_label:
+        data["time"] = f"{data['time']} {time_label}"
+    
+    # 记录市场是否开盘（用于告警逻辑，可选）
+    is_market_open = (
+        (COMMODITY_MORNING_OPEN <= data["time"].split()[0] <= MORNING_CLOSE) or
+        (futures_type == "commodity" and 
+         (datetime.datetime.now().time() >= EVENING_OPEN or 
+          datetime.datetime.now().time() <= EVENING_CLOSE_NEXT_DAY))
+    ) if futures_type == "commodity" else (
+        FUTURES_MORNING_OPEN <= datetime.datetime.now().time() <= MORNING_CLOSE
+    )
+    data["is_market_open"] = is_market_open
 
     # ── 1. account_info ──────────────────────────────────────
     ai_path = os.path.join(path, f"account_info_{data_date}.csv")
@@ -434,10 +499,10 @@ def calculate_product(
     future_df = shared_future_df
     margin_df = shared_margin_df
 
-    # ── 修改 3：计算三个文件中最晚的 update_time ────────────
+    # ── 4. 计算三个文件中最晚的 update_time ────────────
     data["update_time"] = get_latest_update_time(ai_df, pd_df, future_df)
 
-    # ── 4. Per-instrument calculations ───────────────────────
+    # ── 5. Per-instrument calculations ───────────────────────
     market_value          = 0.0
     instrument_margin_max = 0.0
     detail_rows: list[dict] = []
@@ -607,18 +672,22 @@ def dashboard():
                 path = cfg["path"]
                 name = cfg["product_name"]
 
-                market_open = is_market_open(ft)
+                # ── 获取该期货类型的数据日期（这里只为了判断是否加载共享文件）──
+                data_date_for_loading, _ = get_data_date(ft, current_date)
 
+                # ── 加载共享文件（使用同一逻辑）──
                 if ft not in shared_cache:
-                    sd_df, future_df, _dummy_margin, errs = load_shared_files(
-                        ft, path, current_date, market_open
+                    # load_shared_files 内部需要接收 data_date 而不是 market_open
+                    # 您可以选择修改 load_shared_files 的签名，或在此处直接加载
+                    sd_df, future_df, _dummy_margin, errs = load_shared_files_v2(
+                        ft, path, current_date
                     )
                     shared_cache[ft] = (sd_df, future_df, errs)
                     global_file_errors.extend(errs)
 
                 sd_df, future_df, _shared_errs = shared_cache[ft]
 
-                margin_path = get_margin_file_path(path, ft, current_date)
+                margin_path = get_margin_file_path(path, ft, data_date_for_loading)
                 margin_df, m_err = safe_read_csv(margin_path) if margin_path else (None, None)
                 if m_err:
                     global_file_errors.append(m_err)
@@ -631,7 +700,7 @@ def dashboard():
                         product_name     = name,
                         futures_type     = ft,
                         current_date     = current_date,
-                        market_open      = market_open,
+                        # ← 移除 market_open 参数
                         shared_sd_df     = sd_df,
                         shared_future_df = future_df,
                         shared_margin_df = margin_df,
@@ -645,7 +714,7 @@ def dashboard():
                         "init_capital":   0,
                         "time":           now.strftime("%H:%M:%S"),
                         "warnings":       f"Calculation error: {calc_err}",
-                        "is_market_open": market_open,
+                        "is_market_open": False,
                     })
                     detail_df = None
 
@@ -654,7 +723,8 @@ def dashboard():
                     detail_key = (name, ft)
                     detail_map[detail_key] = (cfg, detail_df)
 
-                if market_open:
+                # ── 告警逻辑（基于 is_market_open 字段）──
+                if row["is_market_open"]:
                     try:
                         pll = float(row["product_low_limit"])
                         imu = float(row["instrument_margin_uplimit"])
@@ -671,7 +741,7 @@ def dashboard():
                     except (ValueError, TypeError):
                         pass
 
-            # ── Build overview DataFrame ───────────────────────────
+            # ── 构建 overview DataFrame ───────────────────────────
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
 
             money_cols = [
@@ -694,8 +764,6 @@ def dashboard():
                 .fillna(0).apply(lambda x: f"{x:.4f}")
             )
 
-            # update_time 已是字符串，无需额外格式化，直接保留
-
             display_df = df.drop(columns=["is_market_open"])
             styled_df = (
                 display_df.style
@@ -703,7 +771,7 @@ def dashboard():
                 .map(style_instrument_margin_uplimit, subset=["instrument_margin_uplimit"])
             )
 
-            # ── Render ────────────────────────────────────────────
+            # ── 渲染 ──────────────────────────────────────────
             with placeholder.container():
                 st.markdown(
                     """
@@ -766,7 +834,6 @@ def dashboard():
                 st.error(f"Dashboard loop error: {outer_err}")
 
         time.sleep(10)
-
 
 # ─────────────────────────────────────────────
 # BUILD SUMMARY TABLE
