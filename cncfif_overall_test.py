@@ -709,7 +709,8 @@ def dashboard():
 
                 summary_rows.append(row)
                 if detail_df is not None:
-                    detail_map[name] = (cfg, detail_df)
+                    detail_map[cfg["path"]] = (cfg, detail_df)  # ✅ 改：name → cfg["path"]
+
 
                 if market_open:
                     try:
@@ -788,8 +789,9 @@ def dashboard():
                 for prod_name, (cfg, ddf) in detail_map.items():
                     title = (
                         f"[{('cncf' if cfg['futures_type'] == 'commodity' else 'cnif').upper()}] "
-                        f"{prod_name}  |  {cfg['broker']}"
+                        f"{cfg['product_name']}  |  {cfg['broker']}"  # ✅ 改：prod_name → cfg['product_name']
                     )
+
                     with st.expander(title, expanded=False):
                         display_cols = [
                             "instrument", "position",
