@@ -601,7 +601,7 @@ def dashboard():
             now = datetime.datetime.now()
 
             summary_rows: list[dict]       = []
-            detail_map:   dict[str, tuple] = {}
+            detail_map:   dict[tuple, tuple] = {}  # ← key 类型改为 tuple
             global_file_errors: list[str]  = []
             shared_cache: dict[str, tuple] = {}
 
@@ -628,7 +628,7 @@ def dashboard():
 
                 try:
                     row, detail_df = calculate_product(
-                        cfg              = cfg,        # 传整个 cfg
+                        cfg              = cfg,
                         path             = path,
                         broker           = cfg["broker"],
                         product_name     = name,
@@ -652,12 +652,11 @@ def dashboard():
                     })
                     detail_df = None
 
-
                 summary_rows.append(row)
                 if detail_df is not None:
-                    detail_map[name] = (cfg, detail_df)
+                    detail_key = (name, ft)                  # ← 修改 1：复合 key
+                    detail_map[detail_key] = (cfg, detail_df)
 
-                # Alert only during trading hours
                 if market_open:
                     try:
                         pll = float(row["product_low_limit"])
@@ -734,7 +733,7 @@ def dashboard():
                 st.markdown("---")
                 st.subheader("Per-Instrument Detail")
 
-                for prod_name, (cfg, ddf) in detail_map.items():
+                for (prod_name, _ft), (cfg, ddf) in detail_map.items():  # ← 修改 2：解包复合 key
                     title = (
                         f"[{('cncf' if cfg['futures_type'] == 'commodity' else 'cnif').upper()}] "
                         f"{prod_name}  |  {cfg['broker']}"
@@ -768,7 +767,6 @@ def dashboard():
                 st.error(f"Dashboard loop error: {outer_err}")
 
         time.sleep(10)
-
 
 # ─────────────────────────────────────────────
 # BUILD SUMMARY TABLE
