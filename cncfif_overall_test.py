@@ -13,97 +13,67 @@ import streamlit as st
 
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
 
-# Price cache: { instrument_id -> last known price }
 _price_cache: dict[str, float] = {}
 
-# ── Market-open time windows ──────────────────
 COMMODITY_MORNING_OPEN = datetime.time(9,  0)
 FUTURES_MORNING_OPEN   = datetime.time(9, 30)
 MORNING_CLOSE          = datetime.time(15, 15)
 EVENING_OPEN           = datetime.time(21,  0)
 EVENING_CLOSE_NEXT_DAY = datetime.time(2,  30)
 
-# ── Product registry ──────────────────────────
-#
-# init_capital 三种模式（按优先级）：
-#
-#   模式 A — 自定义公式（最高优先级）
-#     "aum_formula": lambda pre_balance, balance: <expr>
-#     适用：指增1号商品，公式为 2500万 + (balance - 600万)
-#
-#   模式 B — 乘数模式
-#     "aum_mul": <float>
-#     init_capital = pre_balance * aum_mul
-#     适用：久竹1号(4X)、灵隐1号(5X)、指增1号股指(4.7858X)、安心1号(4X)
-#
-#   模式 C — 绝对值（默认，向后兼容）
-#     "init_capital": <int>
-#     适用：山海金区、山海平衡1号（init_capital=0 → fallback pre_balance）
-#     注意：init_capital=0 且无 aum_mul/aum_formula 时退化为 pre_balance×1
-#
-#   默认值：aum_mul=1.0（即 init_capital = pre_balance）
-#
 PRODUCT_CONFIGS = [
-    # ── 安心1号（cncf, 4X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
         "broker":       "Dongzheng",
         "product_name": "Baguatian (AnXin 1Hao)",
         "futures_type": "commodity",
-        "init_capital": 0,           # 由 aum_mul 动态计算，此字段忽略
+        "init_capital": 0,
         "aum_mul":      4.0,
     },
-    # ── 山海金区（无特殊乘数，fallback pre_balance）──────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx",
         "broker":       "Zhongxin",
         "product_name": "Shanhai Jinqu",
         "futures_type": "commodity",
-        "init_capital": 0,           # aum_mul 默认 1.0 → pre_balance
+        "init_capital": 0,
     },
-    # ── 山海平衡1号（无特殊乘数，fallback pre_balance）───────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx",
         "broker":       "Zhongxin",
         "product_name": "Shanhai Pingheng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,           # aum_mul 默认 1.0 → pre_balance
+        "init_capital": 0,
     },
-    # ── 指增1号商品（自定义公式：2500万 + (balance - 600万)）─
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,           # 由 aum_formula 覆盖
-        # 单位：元。2500万=25_000_000，600万=6_000_000
+        "init_capital": 0,
         "aum_formula":  lambda pb, bal: 25_000_000 + (bal - 6_000_000),
     },
-    # ── 久竹1号（cnif, 4X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
         "product_name": "Jiuzhu 1Hao",
         "futures_type": "futures",
-        "init_capital": 0,           # 由 aum_mul 动态计算
+        "init_capital": 0,
         "aum_mul":      4.0,
     },
-    # ── 灵隐1号（cnif, 5X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
         "product_name": "Linyin 1Hao",
         "futures_type": "futures",
-        "init_capital": 0,           # 由 aum_mul 动态计算
+        "init_capital": 0,
         "aum_mul":      5.0,
     },
-    # ── 指增1号股指（cnif, 4.7858X）─────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "futures",
-        "init_capital": 0,           # 由 aum_mul 动态计算
+        "init_capital": 0,
         "aum_mul":      4.7858,
     },
 ]
@@ -114,28 +84,18 @@ PRODUCT_CONFIGS = [
 # ─────────────────────────────────────────────
 
 def resolve_init_capital(cfg: dict, pre_balance: float, balance: float) -> float:
-    """
-    三种模式（按优先级）：
-      1. aum_formula(pre_balance, balance)  — 自定义公式
-      2. pre_balance * aum_mul              — 乘数模式
-      3. cfg["init_capital"]                — 绝对值（0 时退化为 pre_balance）
-    """
-    # 模式 A：自定义公式
     formula = cfg.get("aum_formula")
     if formula is not None:
         return float(formula(pre_balance, balance))
 
-    # 模式 B：乘数模式（aum_mul 存在且不为 1.0，或 init_capital==0 时用 aum_mul）
     aum_mul = cfg.get("aum_mul")
     if aum_mul is not None:
         return float(pre_balance * aum_mul)
 
-    # 模式 C：绝对值
     ic = float(cfg.get("init_capital", 0))
     if ic > 0:
         return ic
 
-    # 最终兜底：直接用 pre_balance（aum_mul=1 的等价形式）
     return float(pre_balance)
 
 
@@ -241,6 +201,51 @@ def send_alert(message: str):
 
 
 # ─────────────────────────────────────────────
+# UPDATE_TIME HELPER                          ← 新增
+# ─────────────────────────────────────────────
+
+def _extract_max_update_time(df: pd.DataFrame | None) -> pd.Timestamp | None:
+    """
+    从 DataFrame 的 update_time 列中提取最大（最晚）时间。
+    若列不存在、DataFrame 为空或解析失败则返回 None。
+    """
+    if df is None or df.empty:
+        return None
+    if "update_time" not in df.columns:
+        return None
+    try:
+        parsed = pd.to_datetime(df["update_time"], errors="coerce").dropna()
+        if parsed.empty:
+            return None
+        return parsed.max()
+    except Exception:
+        return None
+
+
+def get_latest_update_time(
+    ai_df: pd.DataFrame | None,
+    pd_df: pd.DataFrame | None,
+    future_df: pd.DataFrame | None,
+) -> str:
+    """
+    对 account_info、position_data、partial_market_data_realtime
+    三个 DataFrame 分别提取 update_time 最大值，返回三者中最晚的时间字符串。
+    若均无有效值则返回空字符串。
+    """
+    candidates = []
+    for df in (ai_df, pd_df, future_df):
+        t = _extract_max_update_time(df)
+        if t is not None:
+            candidates.append(t)
+
+    if not candidates:
+        return ""
+    latest = max(candidates)
+    # 格式化为 HH:MM:SS（日期部分通常已知，只显示时间更简洁）
+    return latest.strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ─────────────────────────────────────────────
 # PRICE CACHE MANAGEMENT
 # ─────────────────────────────────────────────
 
@@ -313,15 +318,17 @@ def style_nonzero_yellow(val):
 # CORE: calculate_product
 # ─────────────────────────────────────────────
 
+# ── 修改 1：SUMMARY_COLS 新增 "update_time" ──────────────────
 SUMMARY_COLS = [
     "futures_type", "product_name", "broker",
     "init_capital",
     "balance", "pre_balance", "market_value",
     "cost", "abs_return", "pnl_ratio",
     "instrument_margin_uplimit", "product_low_limit",
-    "deposit_withdraw", "time", "warnings", "is_market_open",
+    "deposit_withdraw", "update_time", "time", "warnings", "is_market_open",
 ]
 
+# ── 修改 2：DEFAULT_SUMMARY 新增 "update_time" ───────────────
 DEFAULT_SUMMARY = {
     "futures_type": "",
     "product_name": "",
@@ -336,6 +343,7 @@ DEFAULT_SUMMARY = {
     "instrument_margin_uplimit": 0.0,
     "product_low_limit": 0.0,
     "deposit_withdraw": 0,
+    "update_time": "",          # ← 新增
     "time": "",
     "warnings": "",
     "is_market_open": False,
@@ -343,7 +351,7 @@ DEFAULT_SUMMARY = {
 
 
 def calculate_product(
-    cfg: dict,                            # <-- 整个 cfg 传入，供 resolve_init_capital 使用
+    cfg: dict,
     path: str,
     broker: str,
     product_name: str,
@@ -392,8 +400,7 @@ def calculate_product(
     data["deposit_withdraw"] = deposit - withdraw
     data["cost"]             = fee
 
-    # ── Resolve init_capital (after we have pre_balance & balance) ─
-    # 优先级：aum_formula > aum_mul > init_capital 绝对值 > pre_balance
+    # ── Resolve init_capital ──────────────────────────────────
     init_capital = resolve_init_capital(cfg, pre_balance, balance)
     data["init_capital"] = init_capital
 
@@ -417,7 +424,6 @@ def calculate_product(
     )
 
     # ── 3. PnL ───────────────────────────────────────────────
-    # 分母统一使用 init_capital（已由 resolve_init_capital 计算完毕）
     if init_capital > 0:
         pnl_ratio = round((data["abs_return"] - fee) / init_capital * 100, 3)
     else:
@@ -427,6 +433,9 @@ def calculate_product(
     sd_df     = shared_sd_df
     future_df = shared_future_df
     margin_df = shared_margin_df
+
+    # ── 修改 3：计算三个文件中最晚的 update_time ────────────
+    data["update_time"] = get_latest_update_time(ai_df, pd_df, future_df)
 
     # ── 4. Per-instrument calculations ───────────────────────
     market_value          = 0.0
@@ -438,7 +447,6 @@ def calculate_product(
         if not pd_df.empty else []
     )
 
-    # Load trade file for last-trade-time lookup
     trade_path = get_trade_file_path(path, data_date)
     trade_df, trade_err = safe_read_csv(trade_path)
     if trade_err:
@@ -448,24 +456,18 @@ def calculate_product(
     for inst in instruments:
         inst_warnings: list[str] = []
 
-        # ── Raw positions
         long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
         short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
         long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
         short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
 
-        # ── Net position (for display only)
-        net_pos = long_pos - short_pos
-
-        # ── Dominant position for margin
+        net_pos    = long_pos - short_pos
         margin_pos = max(long_pos, short_pos)
 
-        # ── PnL components
         cp        = float(pd_df[pd_df["instrument_id"] == inst]["close_profit"].fillna(0).sum())
         pp        = float(pd_df[pd_df["instrument_id"] == inst]["position_profit"].fillna(0).sum())
         total_pnl = cp + pp
 
-        # ── Static info
         multiplier = 1.0
         exchange   = ""
         if sd_df is not None and not sd_df.empty:
@@ -481,28 +483,23 @@ def calculate_product(
         else:
             inst_warnings.append(f"static info file unavailable for {inst}")
 
-        # ── Margin ratio
         margin_ratio = 0.0
         if margin_df is not None and not margin_df.empty:
             m_row = margin_df[margin_df["instrument"] == inst]
             if not m_row.empty:
                 margin_ratio = float(m_row["margin_ratio"].iloc[0])
 
-        # ── Price
         price = get_price(inst)
         if price is None:
             inst_warnings.append(f"no price available for {inst} (using 0)")
             price = 0.0
 
-        # ── Market value: gross notional (long + short) — always >= 0
         inst_gross_notional = (long_pos + short_pos) * price * multiplier
         market_value += inst_gross_notional
 
-        # ── Per-instrument margin: use DOMINANT position side
         inst_margin           = price * margin_pos * multiplier * margin_ratio
         instrument_margin_max = max(inst_margin, instrument_margin_max)
 
-        # ── Last trade time
         last_trade_time = ""
         if trade_df is not None and not trade_df.empty:
             inst_col = (
@@ -600,10 +597,10 @@ def dashboard():
             current_date, _ = get_date_from_calendar()
             now = datetime.datetime.now()
 
-            summary_rows: list[dict]       = []
-            detail_map:   dict[tuple, tuple] = {}  # ← key 类型改为 tuple
-            global_file_errors: list[str]  = []
-            shared_cache: dict[str, tuple] = {}
+            summary_rows: list[dict]         = []
+            detail_map:   dict[tuple, tuple] = {}
+            global_file_errors: list[str]    = []
+            shared_cache: dict[str, tuple]   = {}
 
             for cfg in PRODUCT_CONFIGS:
                 ft   = cfg["futures_type"]
@@ -654,7 +651,7 @@ def dashboard():
 
                 summary_rows.append(row)
                 if detail_df is not None:
-                    detail_key = (name, ft)                  # ← 修改 1：复合 key
+                    detail_key = (name, ft)
                     detail_map[detail_key] = (cfg, detail_df)
 
                 if market_open:
@@ -697,11 +694,13 @@ def dashboard():
                 .fillna(0).apply(lambda x: f"{x:.4f}")
             )
 
+            # update_time 已是字符串，无需额外格式化，直接保留
+
             display_df = df.drop(columns=["is_market_open"])
             styled_df = (
                 display_df.style
-                .map(style_product_low_limit,         subset=["product_low_limit"])
-                .map(style_instrument_margin_uplimit,  subset=["instrument_margin_uplimit"])
+                .map(style_product_low_limit,        subset=["product_low_limit"])
+                .map(style_instrument_margin_uplimit, subset=["instrument_margin_uplimit"])
             )
 
             # ── Render ────────────────────────────────────────────
@@ -733,7 +732,7 @@ def dashboard():
                 st.markdown("---")
                 st.subheader("Per-Instrument Detail")
 
-                for (prod_name, _ft), (cfg, ddf) in detail_map.items():  # ← 修改 2：解包复合 key
+                for (prod_name, _ft), (cfg, ddf) in detail_map.items():
                     title = (
                         f"[{('cncf' if cfg['futures_type'] == 'commodity' else 'cnif').upper()}] "
                         f"{prod_name}  |  {cfg['broker']}"
@@ -768,6 +767,7 @@ def dashboard():
 
         time.sleep(10)
 
+
 # ─────────────────────────────────────────────
 # BUILD SUMMARY TABLE
 # ─────────────────────────────────────────────
@@ -784,7 +784,6 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             ).fillna(0)
 
     def _build_row(label: str, subset: pd.DataFrame) -> dict:
-        # aum = 所有产品 init_capital 直接相加（已由 resolve_init_capital 动态计算）
         aum        = subset["init_capital"].sum()
         cost       = subset["cost"].sum()
         abs_return = subset["abs_return"].sum()
