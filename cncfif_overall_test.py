@@ -190,6 +190,26 @@ def file_exists_for_date(path: str, date_int: int) -> bool:
     fp = os.path.join(path, f"account_info_{date_int}.csv")
     return os.path.exists(fp) and os.path.getsize(fp) > 0
 
+def _extract_latest_update_time(*dfs: pd.DataFrame | None) -> str:
+    """
+    从若干 DataFrame 中提取 update_time 列的最大值。
+    支持字符串格式（直接做字符串最大值）和 datetime 格式。
+    返回最晚的 update_time 字符串，若无则返回空串。
+    """
+    candidates: list[str] = []
+    for df in dfs:
+        if df is None or df.empty:
+            continue
+        if "update_time" not in df.columns:
+            continue
+        col = df["update_time"].dropna().astype(str)
+        col = col[col.str.strip() != ""]
+        if col.empty:
+            continue
+        # 字符串比较对 "YYYY-MM-DD HH:MM:SS" / "YYYYMMDD HHMMSS" 等格式均有效
+        candidates.append(col.max())
+    return max(candidates) if candidates else ""
+
 
 # ─────────────────────────────────────────────
 # 核心：get_data_date
@@ -361,7 +381,7 @@ SUMMARY_COLS = [
     "balance", "pre_balance", "market_value",
     "cost", "abs_return", "pnl_ratio",
     "instrument_margin_uplimit", "product_low_limit",
-    "deposit_withdraw", "time", "warnings", "is_market_open",
+    "deposit_withdraw", "update_time", "time", "warnings", "is_market_open",
 ]
 
 DEFAULT_SUMMARY = {
@@ -567,6 +587,7 @@ def calculate_product(
     data["instrument_margin_uplimit"] = (
         instrument_margin_max / balance if balance > 0 else 0.0
     )
+    data["update_time"] = _extract_latest_update_time(ai_df, pd_df, sd_df)
     data["warnings"] = " | ".join(warnings_list)
 
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
