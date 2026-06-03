@@ -645,6 +645,35 @@ def load_shared_files(
 # DASHBOARD
 # ─────────────────────────────────────────────
 
+def load_shared_files_v2(
+    futures_type: str,
+    path: str,
+    current_date: int,
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str]]:
+    """简化版本：自动使用 get_data_date 确定读取的日期"""
+    errors: list[str] = []
+    data_date, _ = get_data_date(futures_type, current_date)
+
+    sd_path = get_static_info_path(futures_type)
+    sd_df, e = safe_read_csv(sd_path)
+    if e:
+        errors.append(e)
+
+    mkt_path = get_market_data_path(futures_type, data_date)
+    future_df, e = safe_read_csv(mkt_path)
+    if e:
+        errors.append(e)
+    else:
+        update_price_cache(future_df)
+
+    margin_path = get_margin_file_path(path, futures_type, data_date)
+    margin_df, e = safe_read_csv(margin_path) if margin_path else (None, None)
+    if e:
+        errors.append(e)
+
+    return sd_df, future_df, margin_df, errors
+
+
 def dashboard():
     st.set_page_config(page_title="Futures Monitor Dashboard", layout="wide")
 
