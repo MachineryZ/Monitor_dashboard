@@ -83,7 +83,7 @@ PRODUCT_CONFIGS = [
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
-        "product_name": "jz1h",
+        "product_name": "Jiuzhu 1Hao",
         "futures_type": "futures",
         "init_capital": 0,           # 由 aum_mul 动态计算
         "aum_mul":      4.0,
@@ -92,7 +92,7 @@ PRODUCT_CONFIGS = [
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
-        "product_name": "ly1h",
+        "product_name": "Linyin 1Hao",
         "futures_type": "futures",
         "init_capital": 0,           # 由 aum_mul 动态计算
         "aum_mul":      5.0,
@@ -101,7 +101,7 @@ PRODUCT_CONFIGS = [
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
-        "product_name": "zz1h",
+        "product_name": "Zhizeng 1Hao",
         "futures_type": "futures",
         "init_capital": 0,           # 由 aum_mul 动态计算
         "aum_mul":      4.7858,
@@ -652,6 +652,7 @@ def dashboard():
                     })
                     detail_df = None
 
+
                 summary_rows.append(row)
                 if detail_df is not None:
                     detail_map[name] = (cfg, detail_df)
@@ -766,7 +767,7 @@ def dashboard():
             with placeholder.container():
                 st.error(f"Dashboard loop error: {outer_err}")
 
-        time.sleep(1)
+        time.sleep(10)
 
 
 # ─────────────────────────────────────────────
