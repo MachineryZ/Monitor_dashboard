@@ -7,103 +7,85 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
+from typing import List
 # ─────────────────────────────────────────────
 # CONSTANTS & CONFIGURATION
 # ─────────────────────────────────────────────
 
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
 
-# Price cache: { instrument_id -> last known price }
 _price_cache: dict[str, float] = {}
 
-# ── Market-open time windows ──────────────────
-COMMODITY_MORNING_OPEN = datetime.time(9,  0)
-FUTURES_MORNING_OPEN   = datetime.time(9, 30)
-MORNING_CLOSE          = datetime.time(15, 15)
-EVENING_OPEN           = datetime.time(21,  0)
-EVENING_CLOSE_NEXT_DAY = datetime.time(2,  30)
+# ── 商品期货 (commodity / cncf) 交易时段 ─────
+# 每条: (start, end, crosses_midnight)
+COMMODITY_SESSIONS = [
+    (datetime.time(9,  0),  datetime.time(10, 15), False),
+    (datetime.time(10, 30), datetime.time(11, 30), False),
+    (datetime.time(13, 30), datetime.time(15,  0), False),
+    (datetime.time(21,  0), datetime.time(2,  30), True ),   # 夜盘，跨午夜
+]
+
+# ── 股指期货 (futures / cnif) 交易时段 ────────
+FUTURES_SESSIONS = [
+    (datetime.time(9,  30), datetime.time(11, 30), False),
+    (datetime.time(13,  0), datetime.time(15,  0), False),
+    # 股指无夜盘
+]
 
 # ── Product registry ──────────────────────────
-#
-# init_capital 三种模式（按优先级）：
-#
-#   模式 A — 自定义公式（最高优先级）
-#     "aum_formula": lambda pre_balance, balance: <expr>
-#     适用：指增1号商品，公式为 2500万 + (balance - 600万)
-#
-#   模式 B — 乘数模式
-#     "aum_mul": <float>
-#     init_capital = pre_balance * aum_mul
-#     适用：久竹1号(4X)、灵隐1号(5X)、指增1号股指(4.7858X)、安心1号(4X)
-#
-#   模式 C — 绝对值（默认，向后兼容）
-#     "init_capital": <int>
-#     适用：山海金区、山海平衡1号（init_capital=0 → fallback pre_balance）
-#     注意：init_capital=0 且无 aum_mul/aum_formula 时退化为 pre_balance×1
-#
-#   默认值：aum_mul=1.0（即 init_capital = pre_balance）
-#
 PRODUCT_CONFIGS = [
-    # ── 安心1号（cncf, 4X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
         "broker":       "Dongzheng",
         "product_name": "Baguatian (AnXin 1Hao)",
         "futures_type": "commodity",
-        "init_capital": 0,           # 由 aum_mul 动态计算，此字段忽略
+        "init_capital": 0,
         "aum_mul":      4.0,
     },
-    # ── 山海金区（无特殊乘数，fallback pre_balance）──────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx",
         "broker":       "Zhongxin",
         "product_name": "Shanhai Jinqu",
         "futures_type": "commodity",
-        "init_capital": 0,           # aum_mul 默认 1.0 → pre_balance
+        "init_capital": 0,
     },
-    # ── 山海平衡1号（无特殊乘数，fallback pre_balance）───────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx",
         "broker":       "Zhongxin",
         "product_name": "Shanhai Pingheng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,           # aum_mul 默认 1.0 → pre_balance
+        "init_capital": 0,
     },
-    # ── 指增1号商品（自定义公式：2500万 + (balance - 600万)）─
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "commodity",
-        "init_capital": 0,           # 由 aum_formula 覆盖
-        # 单位：元。2500万=25_000_000，600万=6_000_000
+        "init_capital": 0,
         "aum_formula":  lambda pb, bal: 25_000_000 + (bal - 6_000_000),
     },
-    # ── 久竹1号（cnif, 4X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "Dongzheng",
         "product_name": "Jiuzhu 1Hao",
         "futures_type": "futures",
-        "init_capital": 0,           # 由 aum_mul 动态计算
+        "init_capital": 0,
         "aum_mul":      4.0,
     },
-    # ── 灵隐1号（cnif, 5X）──────────────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "Dongzheng",
         "product_name": "Linyin 1Hao",
         "futures_type": "futures",
-        "init_capital": 0,           # 由 aum_mul 动态计算
+        "init_capital": 0,
         "aum_mul":      5.0,
     },
-    # ── 指增1号股指（cnif, 4.7858X）─────────────────────────
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "Zhongxin",
         "product_name": "Zhizeng 1Hao",
         "futures_type": "futures",
-        "init_capital": 0,           # 由 aum_mul 动态计算
+        "init_capital": 0,
         "aum_mul":      4.7858,
     },
 ]
@@ -114,28 +96,15 @@ PRODUCT_CONFIGS = [
 # ─────────────────────────────────────────────
 
 def resolve_init_capital(cfg: dict, pre_balance: float, balance: float) -> float:
-    """
-    三种模式（按优先级）：
-      1. aum_formula(pre_balance, balance)  — 自定义公式
-      2. pre_balance * aum_mul              — 乘数模式
-      3. cfg["init_capital"]                — 绝对值（0 时退化为 pre_balance）
-    """
-    # 模式 A：自定义公式
     formula = cfg.get("aum_formula")
     if formula is not None:
         return float(formula(pre_balance, balance))
-
-    # 模式 B：乘数模式（aum_mul 存在且不为 1.0，或 init_capital==0 时用 aum_mul）
     aum_mul = cfg.get("aum_mul")
     if aum_mul is not None:
         return float(pre_balance * aum_mul)
-
-    # 模式 C：绝对值
     ic = float(cfg.get("init_capital", 0))
     if ic > 0:
         return ic
-
-    # 最终兜底：直接用 pre_balance（aum_mul=1 的等价形式）
     return float(pre_balance)
 
 
@@ -143,7 +112,8 @@ def resolve_init_capital(cfg: dict, pre_balance: float, balance: float) -> float
 # HELPERS
 # ─────────────────────────────────────────────
 
-def get_date_from_calendar():
+def get_date_from_calendar() -> tuple[int, int]:
+    """返回 (今日 YYYYMMDD int, 下一交易日 YYYYMMDD int)"""
     date     = datetime.datetime.now().date()
     date_int = int(date.strftime("%Y%m%d"))
     date_list = np.loadtxt(CALENDAR_PATH, dtype=np.int64, ndmin=1)
@@ -152,23 +122,29 @@ def get_date_from_calendar():
     return date_int, next_trade_day
 
 
-def is_market_open(futures_type: str) -> bool:
-    now = datetime.datetime.now()
-    t   = now.time()
-
-    if futures_type == "commodity":
-        in_morning = COMMODITY_MORNING_OPEN <= t <= MORNING_CLOSE
+def _time_in_session(t: datetime.time, start: datetime.time,
+                     end: datetime.time, crosses_midnight: bool) -> bool:
+    """判断时刻 t 是否在 [start, end] 时段内（支持跨午夜）"""
+    if crosses_midnight:
+        # 跨午夜：t >= start（晚上）或 t <= end（凌晨）
+        return t >= start or t <= end
     else:
-        in_morning = FUTURES_MORNING_OPEN <= t <= MORNING_CLOSE
+        return start <= t <= end
 
-    if in_morning:
-        return True
 
-    if futures_type == "commodity":
-        if t >= EVENING_OPEN or t <= EVENING_CLOSE_NEXT_DAY:
-            return True
+def is_commodity_night_session_pre_midnight(t: datetime.time) -> bool:
+    """判断当前时刻是否处于商品夜盘且在午夜之前（21:00–23:59:59）"""
+    return t >= datetime.time(21, 0)
 
-    return False
+
+def is_market_open(futures_type: str) -> bool:
+    """判断当前时刻，指定品种是否正在交易"""
+    t = datetime.datetime.now().time()
+    sessions = COMMODITY_SESSIONS if futures_type == "commodity" else FUTURES_SESSIONS
+    return any(
+        _time_in_session(t, s, e, cross)
+        for s, e, cross in sessions
+    )
 
 
 def get_previous_trade_date(current_date: int) -> int:
@@ -184,6 +160,20 @@ def get_previous_trade_date(current_date: int) -> int:
     return int(d.strftime("%Y%m%d"))
 
 
+def get_next_trade_date(current_date: int) -> int:
+    """返回 current_date 之后的下一个交易日"""
+    try:
+        date_list = np.loadtxt(CALENDAR_PATH, dtype=np.int64, ndmin=1)
+        pos = np.searchsorted(date_list, current_date, side="right")
+        if pos < len(date_list):
+            return int(date_list[pos])
+    except Exception:
+        pass
+    d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
+    d += datetime.timedelta(days=1)
+    return int(d.strftime("%Y%m%d"))
+
+
 def safe_read_csv(filepath: str) -> tuple[pd.DataFrame | None, str | None]:
     if not os.path.exists(filepath):
         return None, f"File not found: {filepath}"
@@ -196,16 +186,89 @@ def safe_read_csv(filepath: str) -> tuple[pd.DataFrame | None, str | None]:
         return None, f"CSV parse error [{filepath}]: {e}"
 
 
-def get_margin_file_path(path: str, futures_type: str, current_date: int) -> str:
+def file_exists_for_date(path: str, date_int: int) -> bool:
+    """检查 path 目录下当天的 account_info 文件是否存在且非空"""
+    fp = os.path.join(path, f"account_info_{date_int}.csv")
+    return os.path.exists(fp) and os.path.getsize(fp) > 0
+
+def _extract_latest_update_time(*dfs: pd.DataFrame | None) -> str:
+    """
+    从若干 DataFrame 中提取 update_time 列的最大值。
+    支持字符串格式（直接做字符串最大值）和 datetime 格式。
+    返回最晚的 update_time 字符串，若无则返回空串。
+    """
+    candidates: list[str] = []
+    for df in dfs:
+        if df is None or df.empty:
+            continue
+        if "update_time" not in df.columns:
+            continue
+        col = df["update_time"].dropna().astype(str)
+        col = col[col.str.strip() != ""]
+        if col.empty:
+            continue
+        # 字符串比较对 "YYYY-MM-DD HH:MM:SS" / "YYYYMMDD HHMMSS" 等格式均有效
+        candidates.append(col.max())
+    return max(candidates) if candidates else ""
+
+
+# ─────────────────────────────────────────────
+# 核心：get_data_date
+#
+# 返回 (data_date: int, label_suffix: str)
+#
+# 规则：
+#   1. 市场开盘中
+#      a. 商品夜盘且当前时刻在午夜前（21:00–23:59）
+#         → data_date = next_trade_day（夜盘数据归属下一交易日）
+#      b. 其他开盘时段
+#         → data_date = current_date
+#   2. 市场关闭中
+#      → 优先尝试 current_date；若文件不存在，fallback 到 prev_date
+# ─────────────────────────────────────────────
+
+def get_data_date(
+    futures_type: str,
+    path: str,
+    current_date: int,
+    market_open: bool,
+) -> tuple[int, str]:
+    """
+    返回 (data_date, label_suffix)
+    label_suffix 用于在 dashboard 的 time 字段追加说明。
+    """
+    now = datetime.datetime.now()
+    t   = now.time()
+
+    if market_open:
+        # 商品夜盘，午夜前（21:00–23:59）→ 数据归属下一交易日
+        if futures_type == "commodity" and is_commodity_night_session_pre_midnight(t):
+            next_td = get_next_trade_date(current_date)
+            return next_td, f" (night→{next_td})"
+        # 其余开盘时段（白天、凌晨夜盘结束前）→ 当天
+        return current_date, ""
+
+    # ── 关盘：优先用当天，fallback 到前一交易日 ──────────────
+    if file_exists_for_date(path, current_date):
+        return current_date, " (today data)"
+    prev = get_previous_trade_date(current_date)
+    return prev, " (prev day data)"
+
+
+# ─────────────────────────────────────────────
+# PATH HELPERS
+# ─────────────────────────────────────────────
+
+def get_margin_file_path(path: str, futures_type: str, data_date: int) -> str:
     if futures_type == "commodity":
         return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit.csv"
     mapping = {
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":
-            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{current_date}.csv",
+            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":
-            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_ly1h_{current_date}.csv",
+            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_ly1h_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":
-            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{current_date}.csv",
+            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv",
     }
     return mapping.get(path, "")
 
@@ -216,16 +279,16 @@ def get_static_info_path(futures_type: str) -> str:
     return "/cpfs/rawdata/cnif_all_need_before_open/ins_static_info.csv"
 
 
-def get_market_data_path(futures_type: str, current_date: int) -> str:
+def get_market_data_path(futures_type: str, data_date: int) -> str:
     kind = "commodity" if futures_type == "commodity" else "futures"
     return (
         f"/mnt/nfs_bohr_data1/china/trading_realdata"
-        f"/partial_market_data_realtime/{kind}/{current_date}.csv"
+        f"/partial_market_data_realtime/{kind}/{data_date}.csv"
     )
 
 
-def get_trade_file_path(path: str, current_date: int) -> str:
-    return os.path.join(path, f"trade_data_{current_date}.csv")
+def get_trade_file_path(path: str, data_date: int) -> str:
+    return os.path.join(path, f"trade_data_{data_date}.csv")
 
 
 def send_alert(message: str):
@@ -282,13 +345,27 @@ def get_price(instrument: str) -> float | None:
 # STYLERS
 # ─────────────────────────────────────────────
 
-def style_product_low_limit(val):
+def style_product_low_limit(row: pd.Series) -> list[str]:
+    """
+    按行判断 product_low_limit 的颜色
+    - Linyin 1Hao < 0.8 黄色
+    - 其他产品 < 0.8 红色
+    - 其他情况 无样式
+    """
+    styles = [""] * len(row)
+    if "product_low_limit" not in row.index:
+        return styles
+    col_idx = row.index.get_loc("product_low_limit")
     try:
-        if float(val) < 0.8:
-            return "background-color: #ff4b4b; color: white"
+        val = float(row["product_low_limit"])
+        if val < 0.8:
+            if row.get("product_name", "") == "Linyin 1Hao":
+                styles[col_idx] = "background-color: #ffd700; color: black"
+            else:
+                styles[col_idx] = "background-color: #ff4b4b; color: white"
     except (ValueError, TypeError):
         pass
-    return ""
+    return styles
 
 
 def style_instrument_margin_uplimit(val):
@@ -319,7 +396,7 @@ SUMMARY_COLS = [
     "balance", "pre_balance", "market_value",
     "cost", "abs_return", "pnl_ratio",
     "instrument_margin_uplimit", "product_low_limit",
-    "deposit_withdraw", "time", "warnings", "is_market_open",
+    "deposit_withdraw", "update_time", "time", "warnings", "is_market_open",
 ]
 
 DEFAULT_SUMMARY = {
@@ -343,7 +420,7 @@ DEFAULT_SUMMARY = {
 
 
 def calculate_product(
-    cfg: dict,                            # <-- 整个 cfg 传入，供 resolve_init_capital 使用
+    cfg: dict,
     path: str,
     broker: str,
     product_name: str,
@@ -363,11 +440,12 @@ def calculate_product(
     data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
     data["is_market_open"] = market_open
 
-    # ── Select date ───────────────────────────────────────────
-    data_date = current_date
-    if not market_open:
-        data_date    = get_previous_trade_date(current_date)
-        data["time"] = f"{data['time']} (prev day data)"
+    # ── 确定读取哪天的数据文件 ─────────────────────────────────
+    # get_data_date 内部已处理：
+    #   • 商品夜盘21:00-23:59 → next_trade_day
+    #   • 关盘 → 优先 current_date，fallback prev_date
+    data_date, time_suffix = get_data_date(futures_type, path, current_date, market_open)
+    data["time"] += time_suffix
 
     # ── 1. account_info ──────────────────────────────────────
     ai_path = os.path.join(path, f"account_info_{data_date}.csv")
@@ -392,8 +470,6 @@ def calculate_product(
     data["deposit_withdraw"] = deposit - withdraw
     data["cost"]             = fee
 
-    # ── Resolve init_capital (after we have pre_balance & balance) ─
-    # 优先级：aum_formula > aum_mul > init_capital 绝对值 > pre_balance
     init_capital = resolve_init_capital(cfg, pre_balance, balance)
     data["init_capital"] = init_capital
 
@@ -417,7 +493,6 @@ def calculate_product(
     )
 
     # ── 3. PnL ───────────────────────────────────────────────
-    # 分母统一使用 init_capital（已由 resolve_init_capital 计算完毕）
     if init_capital > 0:
         pnl_ratio = round((data["abs_return"] - fee) / init_capital * 100, 3)
     else:
@@ -438,7 +513,6 @@ def calculate_product(
         if not pd_df.empty else []
     )
 
-    # Load trade file for last-trade-time lookup
     trade_path = get_trade_file_path(path, data_date)
     trade_df, trade_err = safe_read_csv(trade_path)
     if trade_err:
@@ -448,24 +522,18 @@ def calculate_product(
     for inst in instruments:
         inst_warnings: list[str] = []
 
-        # ── Raw positions
         long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
         short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
         long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
         short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
 
-        # ── Net position (for display only)
-        net_pos = long_pos - short_pos
-
-        # ── Dominant position for margin
+        net_pos    = long_pos - short_pos
         margin_pos = max(long_pos, short_pos)
 
-        # ── PnL components
         cp        = float(pd_df[pd_df["instrument_id"] == inst]["close_profit"].fillna(0).sum())
         pp        = float(pd_df[pd_df["instrument_id"] == inst]["position_profit"].fillna(0).sum())
         total_pnl = cp + pp
 
-        # ── Static info
         multiplier = 1.0
         exchange   = ""
         if sd_df is not None and not sd_df.empty:
@@ -481,28 +549,22 @@ def calculate_product(
         else:
             inst_warnings.append(f"static info file unavailable for {inst}")
 
-        # ── Margin ratio
         margin_ratio = 0.0
         if margin_df is not None and not margin_df.empty:
             m_row = margin_df[margin_df["instrument"] == inst]
             if not m_row.empty:
                 margin_ratio = float(m_row["margin_ratio"].iloc[0])
 
-        # ── Price
         price = get_price(inst)
         if price is None:
             inst_warnings.append(f"no price available for {inst} (using 0)")
             price = 0.0
 
-        # ── Market value: gross notional (long + short) — always >= 0
-        inst_gross_notional = (long_pos + short_pos) * price * multiplier
-        market_value += inst_gross_notional
-
-        # ── Per-instrument margin: use DOMINANT position side
+        inst_gross_notional   = (long_pos + short_pos) * price * multiplier
+        market_value         += inst_gross_notional
         inst_margin           = price * margin_pos * multiplier * margin_ratio
         instrument_margin_max = max(inst_margin, instrument_margin_max)
 
-        # ── Last trade time
         last_trade_time = ""
         if trade_df is not None and not trade_df.empty:
             inst_col = (
@@ -540,6 +602,7 @@ def calculate_product(
     data["instrument_margin_uplimit"] = (
         instrument_margin_max / balance if balance > 0 else 0.0
     )
+    data["update_time"] = _extract_latest_update_time(ai_df, pd_df, sd_df)
     data["warnings"] = " | ".join(warnings_list)
 
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
@@ -557,7 +620,9 @@ def load_shared_files(
     market_open: bool,
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str]]:
     errors: list[str] = []
-    data_date = current_date if market_open else get_previous_trade_date(current_date)
+
+    # 与 calculate_product 保持一致：用同一套日期决策
+    data_date, _ = get_data_date(futures_type, path, current_date, market_open)
 
     sd_path = get_static_info_path(futures_type)
     sd_df, e = safe_read_csv(sd_path)
@@ -612,23 +677,28 @@ def dashboard():
 
                 market_open = is_market_open(ft)
 
-                if ft not in shared_cache:
+                # shared_cache key 需要同时区分 futures_type 和 data_date
+                # （不同产品同类型的 data_date 相同，可以复用）
+                data_date_for_shared, _ = get_data_date(ft, path, current_date, market_open)
+                cache_key = (ft, data_date_for_shared)
+
+                if cache_key not in shared_cache:
                     sd_df, future_df, _dummy_margin, errs = load_shared_files(
                         ft, path, current_date, market_open
                     )
-                    shared_cache[ft] = (sd_df, future_df, errs)
+                    shared_cache[cache_key] = (sd_df, future_df, errs)
                     global_file_errors.extend(errs)
 
-                sd_df, future_df, _shared_errs = shared_cache[ft]
+                sd_df, future_df, _shared_errs = shared_cache[cache_key]
 
-                margin_path = get_margin_file_path(path, ft, current_date)
+                margin_path = get_margin_file_path(path, ft, data_date_for_shared)
                 margin_df, m_err = safe_read_csv(margin_path) if margin_path else (None, None)
                 if m_err:
                     global_file_errors.append(m_err)
 
                 try:
                     row, detail_df = calculate_product(
-                        cfg              = cfg,        # 传整个 cfg
+                        cfg              = cfg,
                         path             = path,
                         broker           = cfg["broker"],
                         product_name     = name,
@@ -652,17 +722,16 @@ def dashboard():
                     })
                     detail_df = None
 
-
                 summary_rows.append(row)
                 if detail_df is not None:
-                    detail_map[name] = (cfg, detail_df)
+                    detail_map[cfg["path"]] = (cfg, detail_df)  # ✅ 改：name → cfg["path"]
 
-                # Alert only during trading hours
+
                 if market_open:
                     try:
                         pll = float(row["product_low_limit"])
                         imu = float(row["instrument_margin_uplimit"])
-                        if pll < 0.8:
+                        if pll < 0.8 and name not in {"Linyin 1Hao"}:
                             send_alert(
                                 f"[ALERT] product_low_limit < 0.8 | "
                                 f"broker={row['broker']} product={name} time={row['time']}"
@@ -675,7 +744,6 @@ def dashboard():
                     except (ValueError, TypeError):
                         pass
 
-            # ── Build overview DataFrame ───────────────────────────
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
 
             money_cols = [
@@ -699,13 +767,13 @@ def dashboard():
             )
 
             display_df = df.drop(columns=["is_market_open"])
+            
             styled_df = (
                 display_df.style
-                .map(style_product_low_limit,         subset=["product_low_limit"])
-                .map(style_instrument_margin_uplimit,  subset=["instrument_margin_uplimit"])
+                .apply(style_product_low_limit,  axis=1)
+                .map(style_instrument_margin_uplimit, subset=["instrument_margin_uplimit"])
             )
 
-            # ── Render ────────────────────────────────────────────
             with placeholder.container():
                 st.markdown(
                     """
@@ -737,8 +805,9 @@ def dashboard():
                 for prod_name, (cfg, ddf) in detail_map.items():
                     title = (
                         f"[{('cncf' if cfg['futures_type'] == 'commodity' else 'cnif').upper()}] "
-                        f"{prod_name}  |  {cfg['broker']}"
+                        f"{cfg['product_name']}  |  {cfg['broker']}"  # ✅ 改：prod_name → cfg['product_name']
                     )
+
                     with st.expander(title, expanded=False):
                         display_cols = [
                             "instrument", "position",
@@ -751,7 +820,7 @@ def dashboard():
 
                         display_ddf.columns = [
                             "合约名称", "持仓(+多/-空)",
-                            "平仓盈亏", "持仓盈亏", "总盈亏",
+                            "平仓盈亏", "持仓盈亏", "当日盈亏",
                             "单合约保证金", "交易所", "最后成交时间",
                         ][: len(display_ddf.columns)]
 
@@ -786,7 +855,6 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             ).fillna(0)
 
     def _build_row(label: str, subset: pd.DataFrame) -> dict:
-        # aum = 所有产品 init_capital 直接相加（已由 resolve_init_capital 动态计算）
         aum        = subset["init_capital"].sum()
         cost       = subset["cost"].sum()
         abs_return = subset["abs_return"].sum()

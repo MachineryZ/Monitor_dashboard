@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
+from typing import List
 # ─────────────────────────────────────────────
 # CONSTANTS & CONFIGURATION
 # ─────────────────────────────────────────────
@@ -344,13 +345,27 @@ def get_price(instrument: str) -> float | None:
 # STYLERS
 # ─────────────────────────────────────────────
 
-def style_product_low_limit(val):
+def style_product_low_limit(row: pd.Series) -> list[str]:
+    """
+    按行判断 product_low_limit 的颜色
+    - Linyin 1Hao < 0.8 黄色
+    - 其他产品 < 0.8 红色
+    - 其他情况 无样式
+    """
+    styles = [""] * len(row)
+    if "product_low_limit" not in row.index:
+        return styles
+    col_idx = row.index.get_loc("product_low_limit")
     try:
-        if float(val) < 0.8:
-            return "background-color: #ff4b4b; color: white"
+        val = float(row["product_low_limit"])
+        if val < 0.8:
+            if row.get("product_name", "") == "Linyin 1Hao":
+                styles[col_idx] = "background-color: #ffd700; color: black"
+            else:
+                styles[col_idx] = "background-color: #ff4b4b; color: white"
     except (ValueError, TypeError):
         pass
-    return ""
+    return styles
 
 
 def style_instrument_margin_uplimit(val):
@@ -716,7 +731,7 @@ def dashboard():
                     try:
                         pll = float(row["product_low_limit"])
                         imu = float(row["instrument_margin_uplimit"])
-                        if pll < 0.8:
+                        if pll < 0.8 and name not in {"Linyin 1Hao"}:
                             send_alert(
                                 f"[ALERT] product_low_limit < 0.8 | "
                                 f"broker={row['broker']} product={name} time={row['time']}"
@@ -752,9 +767,10 @@ def dashboard():
             )
 
             display_df = df.drop(columns=["is_market_open"])
+            
             styled_df = (
                 display_df.style
-                .map(style_product_low_limit,        subset=["product_low_limit"])
+                .apply(style_product_low_limit,  axis=1)
                 .map(style_instrument_margin_uplimit, subset=["instrument_margin_uplimit"])
             )
 
@@ -804,7 +820,7 @@ def dashboard():
 
                         display_ddf.columns = [
                             "合约名称", "持仓(+多/-空)",
-                            "平仓盈亏", "持仓盈亏", "总盈亏",
+                            "平仓盈亏", "持仓盈亏", "当日盈亏",
                             "单合约保证金", "交易所", "最后成交时间",
                         ][: len(display_ddf.columns)]
 
