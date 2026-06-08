@@ -6,7 +6,6 @@ import datetime
 import pandas as pd
 import numpy as np
 import streamlit as st
-from streamlit_tooltip import st_tooltip
 from typing import List
 
 # ─────────────────────────────────────────────
@@ -316,7 +315,7 @@ def get_data_date(
 
 def get_margin_file_path(path: str, market: str, data_date: int) -> str:
     if market == "commodity":
-        return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit.csv"
+        return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     mapping = {
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":
             f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{data_date}.csv",
