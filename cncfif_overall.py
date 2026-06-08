@@ -175,7 +175,7 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
     query = f"""
         SELECT coef
         FROM commodity_meta.product_uplimit_coef
-        WHERE product_name = '{product_name}'
+        WHERE product_name = 'all'
         LIMIT 1
     """
     
@@ -1164,7 +1164,8 @@ def display_overview_with_tooltips(styled_df):
     }
     
     # 第一步：显示表格
-    st.dataframe(styled_df, use_container_width=True)
+    # st.dataframe(styled_df, use_container_width=True)
+    st.dataframe(styled_df, width="stretch")
     
     # 第二步：添加可展开的字段说明区域
     st.markdown("---")
@@ -1412,7 +1413,8 @@ def dashboard():
                 st.markdown("---")
                 st.subheader("📊 Trading Summary")
                 summary_table = build_summary_table(df)
-                st.dataframe(summary_table, use_container_width=True)
+                # st.dataframe(summary_table, use_container_width=True)
+                st.dataframe(summary_table, width="stretch")
 
                 if global_file_errors:
                     st.error(
@@ -1501,7 +1503,8 @@ def dashboard():
                                 )
                             return df_styled
 
-                        st.dataframe(display_ddf, use_container_width=True)
+                        # st.dataframe(display_ddf, use_container_width=True)
+                        st.dataframe(display_ddf, width="stretch")
 
                         # 显示警告信息
                         if "_warnings" in ddf.columns:
