@@ -36,55 +36,55 @@ FUTURES_SESSIONS = [
 PRODUCT_CONFIGS = [
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
-        "broker":       "Dongzheng",
-        "product_name": "Baguatian (AnXin 1Hao)",
-        "futures_type": "commodity",
+        "broker":       "dz",
+        "product":      "bgt_ax1h",
+        "market":       "commodity",
         "init_capital": 0,
         "aum_mul":      4.0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx",
-        "broker":       "Zhongxin",
-        "product_name": "Shanhai Jinqu",
-        "futures_type": "commodity",
+        "broker":       "zx",
+        "product": "shjq",
+        "market": "commodity",
         "init_capital": 0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx",
-        "broker":       "Zhongxin",
-        "product_name": "Shanhai Pingheng 1Hao",
-        "futures_type": "commodity",
+        "broker":       "zx",
+        "product": "shph1h",
+        "market": "commodity",
         "init_capital": 0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
-        "broker":       "Zhongxin",
-        "product_name": "Zhizeng 1Hao",
-        "futures_type": "commodity",
+        "broker":       "zx",
+        "product": "zz1h",
+        "market": "commodity",
         "init_capital": 0,
         "aum_formula":  lambda pb, bal: 25_000_000 + (bal - 6_000_000),
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
-        "broker":       "Dongzheng",
-        "product_name": "Jiuzhu 1Hao",
-        "futures_type": "futures",
+        "broker":       "dz",
+        "product": "jz1h",
+        "market": "futures",
         "init_capital": 0,
         "aum_mul":      4.0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
-        "broker":       "Dongzheng",
-        "product_name": "Linyin 1Hao",
-        "futures_type": "futures",
+        "broker":       "dz",
+        "product":      "ly1h",
+        "market": "futures",
         "init_capital": 0,
         "aum_mul":      5.0,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
-        "broker":       "Zhongxin",
-        "product_name": "Zhizeng 1Hao",
-        "futures_type": "futures",
+        "broker":       "zx",
+        "product": "zz1h",
+        "market": "futures",
         "init_capital": 0,
         "aum_mul":      4.7858,
     },
@@ -137,10 +137,10 @@ def is_commodity_night_session_pre_midnight(t: datetime.time) -> bool:
     return t >= datetime.time(21, 0)
 
 
-def is_market_open(futures_type: str) -> bool:
+def is_market_open(market: str) -> bool:
     """判断当前时刻，指定品种是否正在交易"""
     t = datetime.datetime.now().time()
-    sessions = COMMODITY_SESSIONS if futures_type == "commodity" else FUTURES_SESSIONS
+    sessions = COMMODITY_SESSIONS if market == "commodity" else FUTURES_SESSIONS
     return any(
         _time_in_session(t, s, e, cross)
         for s, e, cross in sessions
@@ -228,7 +228,7 @@ def _extract_latest_update_time(*dfs: pd.DataFrame | None) -> str:
 # ─────────────────────────────────────────────
 
 def get_data_date(
-    futures_type: str,
+    market: str,
     path: str,
     current_date: int,
     market_open: bool,
@@ -242,7 +242,7 @@ def get_data_date(
 
     if market_open:
         # 商品夜盘，午夜前（21:00–23:59）→ 数据归属下一交易日
-        if futures_type == "commodity" and is_commodity_night_session_pre_midnight(t):
+        if market == "commodity" and is_commodity_night_session_pre_midnight(t):
             next_td = get_next_trade_date(current_date)
             return next_td, f" (night→{next_td})"
         # 其余开盘时段（白天、凌晨夜盘结束前）→ 当天
@@ -259,8 +259,8 @@ def get_data_date(
 # PATH HELPERS
 # ─────────────────────────────────────────────
 
-def get_margin_file_path(path: str, futures_type: str, data_date: int) -> str:
-    if futures_type == "commodity":
+def get_margin_file_path(path: str, market: str, data_date: int) -> str:
+    if market == "commodity":
         return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit.csv"
     mapping = {
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":
@@ -273,14 +273,14 @@ def get_margin_file_path(path: str, futures_type: str, data_date: int) -> str:
     return mapping.get(path, "")
 
 
-def get_static_info_path(futures_type: str) -> str:
-    if futures_type == "commodity":
+def get_static_info_path(market: str) -> str:
+    if market == "commodity":
         return "/cpfs/rawdata/cncf_all_nedd_before_open/ins_static_info.csv"
     return "/cpfs/rawdata/cnif_all_need_before_open/ins_static_info.csv"
 
 
-def get_market_data_path(futures_type: str, data_date: int) -> str:
-    kind = "commodity" if futures_type == "commodity" else "futures"
+def get_market_data_path(market: str, data_date: int) -> str:
+    kind = "commodity" if market == "commodity" else "futures"
     return (
         f"/mnt/nfs_bohr_data1/china/trading_realdata"
         f"/partial_market_data_realtime/{kind}/{data_date}.csv"
@@ -307,9 +307,9 @@ def send_alert(message: str):
 # PRICE CACHE MANAGEMENT
 # ─────────────────────────────────────────────
 
-def init_price_cache(futures_type: str, current_date: int):
+def init_price_cache(market: str, current_date: int):
     for cfg in PRODUCT_CONFIGS:
-        if cfg["futures_type"] != futures_type:
+        if cfg["market"] != market:
             continue
         pd_path = os.path.join(cfg["path"], f"position_data_{current_date}.csv")
         df, err = safe_read_csv(pd_path)
@@ -359,7 +359,7 @@ def style_product_low_limit(row: pd.Series) -> list[str]:
     try:
         val = float(row["product_low_limit"])
         if val < 0.8:
-            if row.get("product_name", "") == "Linyin 1Hao":
+            if row.get("product", "") == "ly1h":
                 styles[col_idx] = "background-color: #ffd700; color: black"
             else:
                 styles[col_idx] = "background-color: #ff4b4b; color: white"
@@ -368,9 +368,9 @@ def style_product_low_limit(row: pd.Series) -> list[str]:
     return styles
 
 
-def style_instrument_margin_uplimit(val):
+def style_max_margin(val):
     try:
-        if float(val) > 0.25:
+        if float(val[:-1]/100) > 0.25:
             return "background-color: #ff4b4b; color: white"
     except (ValueError, TypeError):
         pass
@@ -386,32 +386,44 @@ def style_nonzero_yellow(val):
     return ""
 
 
+def style_margin_ratio(val):
+    try:
+        if abs(float(val)) > 0.65:
+            return "background-color: #ffd700; color: black"
+    except (ValueError, TypeError):
+        pass
+    return ""
+
 # ─────────────────────────────────────────────
 # CORE: calculate_product
 # ─────────────────────────────────────────────
 
 SUMMARY_COLS = [
-    "futures_type", "product_name", "broker",
+    "market", "product", "broker",
     "init_capital",
     "balance", "pre_balance", "market_value",
-    "cost", "abs_return", "pnl_ratio",
-    "instrument_margin_uplimit", "product_low_limit",
-    "deposit_withdraw", "update_time", "time", "warnings", "is_market_open",
+    "cost", "ret", "pnl",
+    "max_margin", "product_low_limit",
+    "margin", "margin_ratio",
+    "update_time", "time", "warnings", "deposit_withdraw", "is_market_open",
 ]
+# max_margin = max_margin
 
 DEFAULT_SUMMARY = {
-    "futures_type": "",
-    "product_name": "",
+    "market": "",
+    "product": "",
     "broker": "",
     "init_capital": 0,
     "balance": 0,
     "pre_balance": 0,
     "market_value": 0,
     "cost": 0,
-    "abs_return": 0,
-    "pnl_ratio": "0.000%",
-    "instrument_margin_uplimit": 0.0,
+    "ret": 0,
+    "pnl": "0.000%",
+    "max_margin": 0.0,
     "product_low_limit": 0.0,
+    "margin": 0.0,
+    "margin_ratio": "0.000%",
     "deposit_withdraw": 0,
     "time": "",
     "warnings": "",
@@ -423,8 +435,8 @@ def calculate_product(
     cfg: dict,
     path: str,
     broker: str,
-    product_name: str,
-    futures_type: str,
+    product: str,
+    market: str,
     current_date: int,
     market_open: bool,
     shared_sd_df: pd.DataFrame | None,
@@ -434,8 +446,8 @@ def calculate_product(
 
     warnings_list: list[str] = []
     data = dict(DEFAULT_SUMMARY)
-    data["futures_type"]   = "cncf" if futures_type == "commodity" else "cnif"
-    data["product_name"]   = product_name
+    data["market"]   = "cncf" if market == "commodity" else "cnif"
+    data["product"]   = product
     data["broker"]         = broker
     data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
     data["is_market_open"] = market_open
@@ -444,7 +456,7 @@ def calculate_product(
     # get_data_date 内部已处理：
     #   • 商品夜盘21:00-23:59 → next_trade_day
     #   • 关盘 → 优先 current_date，fallback prev_date
-    data_date, time_suffix = get_data_date(futures_type, path, current_date, market_open)
+    data_date, time_suffix = get_data_date(market, path, current_date, market_open)
     data["time"] += time_suffix
 
     # ── 1. account_info ──────────────────────────────────────
@@ -459,17 +471,20 @@ def calculate_product(
         warnings_list.append(f"Header-only file (using defaults): {ai_path}")
         balance = pre_balance = deposit = withdraw = fee = 0.0
     else:
-        balance     = float(ai_df["balance"].iloc[0])
-        pre_balance = float(ai_df["pre_balance"].iloc[0])
-        deposit     = float(ai_df["deposit"].iloc[0])
-        withdraw    = float(ai_df["withdraw"].iloc[0])
-        fee         = float(ai_df["fee"].iloc[0])
+        balance      = float(ai_df["balance"].iloc[0])
+        pre_balance  = float(ai_df["pre_balance"].iloc[0])
+        deposit      = float(ai_df["deposit"].iloc[0])
+        withdraw     = float(ai_df["withdraw"].iloc[0])
+        fee          = float(ai_df["fee"].iloc[0])
+        margin       = float(ai_df["curr_margin"].iloc[0])
+        margin_ratio = margin / pre_balance
 
+    data["margin_ratio"] = f"{100*margin_ratio:.2f}%"
     data["balance"]          = balance
     data["pre_balance"]      = pre_balance
     data["deposit_withdraw"] = deposit - withdraw
     data["cost"]             = fee
-
+    data["margin"]           = margin
     init_capital = resolve_init_capital(cfg, pre_balance, balance)
     data["init_capital"] = init_capital
 
@@ -487,17 +502,17 @@ def calculate_product(
             "position_profit", "close_profit", "pre_settlement_price",
         ])
 
-    data["abs_return"] = float(
+    data["ret"] = float(
         (pd_df.get("position_profit", pd.Series([0])).fillna(0)
          + pd_df.get("close_profit",  pd.Series([0])).fillna(0)).sum()
     )
 
     # ── 3. PnL ───────────────────────────────────────────────
     if init_capital > 0:
-        pnl_ratio = round((data["abs_return"] - fee) / init_capital * 100, 3)
+        pnl = round((data["ret"] - fee) / init_capital * 100, 3)
     else:
-        pnl_ratio = 0.0
-    data["pnl_ratio"] = f"{pnl_ratio:.3f}%"
+        pnl = 0.0
+    data["pnl"] = f"{pnl:.3f}%"
 
     sd_df     = shared_sd_df
     future_df = shared_future_df
@@ -599,7 +614,7 @@ def calculate_product(
     data["product_low_limit"] = (
         market_value / balance if balance > 0 else 0.0
     )
-    data["instrument_margin_uplimit"] = (
+    data["max_margin"] = (
         instrument_margin_max / balance if balance > 0 else 0.0
     )
     data["update_time"] = _extract_latest_update_time(ai_df, pd_df, sd_df)
@@ -614,7 +629,7 @@ def calculate_product(
 # ─────────────────────────────────────────────
 
 def load_shared_files(
-    futures_type: str,
+    market: str,
     path: str,
     current_date: int,
     market_open: bool,
@@ -622,21 +637,21 @@ def load_shared_files(
     errors: list[str] = []
 
     # 与 calculate_product 保持一致：用同一套日期决策
-    data_date, _ = get_data_date(futures_type, path, current_date, market_open)
+    data_date, _ = get_data_date(market, path, current_date, market_open)
 
-    sd_path = get_static_info_path(futures_type)
+    sd_path = get_static_info_path(market)
     sd_df, e = safe_read_csv(sd_path)
     if e:
         errors.append(e)
 
-    mkt_path = get_market_data_path(futures_type, data_date)
+    mkt_path = get_market_data_path(market, data_date)
     future_df, e = safe_read_csv(mkt_path)
     if e:
         errors.append(e)
     else:
         update_price_cache(future_df)
 
-    margin_path = get_margin_file_path(path, futures_type, data_date)
+    margin_path = get_margin_file_path(path, market, data_date)
     margin_df, e = safe_read_csv(margin_path) if margin_path else (None, None)
     if e:
         errors.append(e)
@@ -671,13 +686,13 @@ def dashboard():
             shared_cache: dict[str, tuple] = {}
 
             for cfg in PRODUCT_CONFIGS:
-                ft   = cfg["futures_type"]
+                ft   = cfg["market"]
                 path = cfg["path"]
-                name = cfg["product_name"]
+                name = cfg["product"]
 
                 market_open = is_market_open(ft)
 
-                # shared_cache key 需要同时区分 futures_type 和 data_date
+                # shared_cache key 需要同时区分 market 和 data_date
                 # （不同产品同类型的 data_date 相同，可以复用）
                 data_date_for_shared, _ = get_data_date(ft, path, current_date, market_open)
                 cache_key = (ft, data_date_for_shared)
@@ -701,8 +716,8 @@ def dashboard():
                         cfg              = cfg,
                         path             = path,
                         broker           = cfg["broker"],
-                        product_name     = name,
-                        futures_type     = ft,
+                        product     = name,
+                        market     = ft,
                         current_date     = current_date,
                         market_open      = market_open,
                         shared_sd_df     = sd_df,
@@ -712,8 +727,8 @@ def dashboard():
                 except Exception as calc_err:
                     row = dict(DEFAULT_SUMMARY)
                     row.update({
-                        "futures_type":   "cncf" if ft == "commodity" else "cnif",
-                        "product_name":   name,
+                        "market":   "cncf" if ft == "commodity" else "cnif",
+                        "product":   name,
                         "broker":         cfg["broker"],
                         "init_capital":   0,
                         "time":           now.strftime("%H:%M:%S"),
@@ -730,15 +745,15 @@ def dashboard():
                 if market_open:
                     try:
                         pll = float(row["product_low_limit"])
-                        imu = float(row["instrument_margin_uplimit"])
-                        if pll < 0.8 and name not in {"Linyin 1Hao"}:
+                        imu = float(row["max_margin"])
+                        if pll < 0.8 and name not in {"ly1h"}:
                             send_alert(
                                 f"[ALERT] product_low_limit < 0.8 | "
                                 f"broker={row['broker']} product={name} time={row['time']}"
                             )
                         if imu > 0.25:
                             send_alert(
-                                f"[ALERT] instrument_margin_uplimit > 0.25 | "
+                                f"[ALERT] max_margin > 0.25 | "
                                 f"broker={row['broker']} product={name} time={row['time']}"
                             )
                     except (ValueError, TypeError):
@@ -748,7 +763,7 @@ def dashboard():
 
             money_cols = [
                 "balance", "pre_balance", "market_value",
-                "deposit_withdraw", "cost", "abs_return", "init_capital",
+                "deposit_withdraw", "cost", "ret", "init_capital", "margin"
             ]
             for col in money_cols:
                 df[col] = (
@@ -757,9 +772,9 @@ def dashboard():
                     .apply(lambda x: f"{x:,}")
                 )
 
-            df["instrument_margin_uplimit"] = (
-                pd.to_numeric(df["instrument_margin_uplimit"], errors="coerce")
-                .fillna(0).apply(lambda x: f"{x:.4f}")
+            df["max_margin"] = (
+                pd.to_numeric(df["max_margin"], errors="coerce")
+                .fillna(0).apply(lambda x: f"{100*x:.2f}%")
             )
             df["product_low_limit"] = (
                 pd.to_numeric(df["product_low_limit"], errors="coerce")
@@ -771,7 +786,7 @@ def dashboard():
             styled_df = (
                 display_df.style
                 .apply(style_product_low_limit,  axis=1)
-                .map(style_instrument_margin_uplimit, subset=["instrument_margin_uplimit"])
+                .map(style_max_margin, subset=["max_margin"])
             )
 
             with placeholder.container():
@@ -804,8 +819,8 @@ def dashboard():
 
                 for prod_name, (cfg, ddf) in detail_map.items():
                     title = (
-                        f"[{('cncf' if cfg['futures_type'] == 'commodity' else 'cnif').upper()}] "
-                        f"{cfg['product_name']}  |  {cfg['broker']}"  # ✅ 改：prod_name → cfg['product_name']
+                        f"[{('cncf' if cfg['market'] == 'commodity' else 'cnif').upper()}] "
+                        f"{cfg['product']}  |  {cfg['broker']}"  # ✅ 改：prod_name → cfg['product']
                     )
 
                     with st.expander(title, expanded=False):
@@ -847,7 +862,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     summary_rows = []
 
     df_numeric = df.copy()
-    for col in ["balance", "pre_balance", "init_capital", "cost", "abs_return", "market_value"]:
+    for col in ["balance", "pre_balance", "init_capital", "cost", "ret", "market_value"]:
         if col in df_numeric.columns:
             df_numeric[col] = pd.to_numeric(
                 df_numeric[col].astype(str).str.replace(",", ""),
@@ -857,20 +872,20 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     def _build_row(label: str, subset: pd.DataFrame) -> dict:
         aum        = subset["init_capital"].sum()
         cost       = subset["cost"].sum()
-        abs_return = subset["abs_return"].sum()
-        total_pnl  = abs_return - cost
+        ret        = subset["ret"].sum()
+        total_pnl  = ret - cost
         pnl_pct    = (total_pnl / aum * 100) if aum > 0 else 0.0
         return {
             "summary":    label,
             "aum":        int(aum),
             "cost":       int(cost),
-            "abs_return": int(abs_return),
+            "ret": int(ret),
             "total_pnl":  int(total_pnl),
-            "pnl_ratio":  f"{pnl_pct:.3f}%",
+            "pnl":  f"{pnl_pct:.3f}%",
         }
 
-    cncf_data = df_numeric[df_numeric["futures_type"] == "cncf"]
-    cnif_data = df_numeric[df_numeric["futures_type"] == "cnif"]
+    cncf_data = df_numeric[df_numeric["market"] == "cncf"]
+    cnif_data = df_numeric[df_numeric["market"] == "cnif"]
 
     if not cncf_data.empty:
         summary_rows.append(_build_row("cncf", cncf_data))
@@ -879,7 +894,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     summary_rows.append(_build_row("cn_all", df_numeric))
 
     summary_df = pd.DataFrame(summary_rows)
-    for col in ["aum", "cost", "abs_return", "total_pnl"]:
+    for col in ["aum", "cost", "ret", "total_pnl"]:
         summary_df[col] = summary_df[col].apply(lambda x: f"{x:,}")
 
     return summary_df
