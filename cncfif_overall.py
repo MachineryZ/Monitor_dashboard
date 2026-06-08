@@ -1123,103 +1123,59 @@ def load_shared_files(
 # ─────────────────────────────────────────────
 
 def display_overview_with_tooltips(styled_df):
-    """
-    需求7：显示 Overview，并通过原生 Streamlit 添加字段说明
-    使用 Expander + 表格的组合方案（最推荐）
-    """
-    
-    # 字段说明词典
-    column_descriptions = {
-        "market": "市场类型\n- cncf = 商品期货\n- cnif = 股指期货",
-        
-        "product": "产品/策略代码\n示例: bgt_ax1h, jz1h, ly1h, zz1h",
-        
-        "broker": "交易券商名称\n示例: dz (东正), zx (中信)",
-        
-        "init_capital": "初始资金/策略规模\n计算: pre_balance × aum_mul\n或按指定公式计算",
-        
-        "balance": "当前账户余额\n= 前日余额 + 入金 - 出金 + 盈亏 - 手续费",
-        
-        "pre_balance": "前一交易日的账户余额\n用于计算初始资金基数",
-        
-        "market_value": "当前持仓市值\n= Σ(合约数量 × 市场价格 × 合约乘数)",
-        
-        "cost": "累计手续费\n交易费用总和",
-        
-        "ret": "总回报/盈亏\n= 平仓盈亏 + 持仓盈亏",
-        
-        "pnl": "收益率（百分比）\n= (ret - cost) / init_capital × 100%\n= 策略整体盈利能力",
-        
-        "max_margin": "最大单合约保证金占比\n= max(单合约保证金) / 账户余额\n⚠️ > 0.25 (25%) 时告警",
-        
-        "product_low_limit": "产品低流动性限制\n= 持仓市值 / 账户余额\n⚠️ < 0.8 (除 ly1h) 时告警",
-        
-        "margin": "当前占用的保证金\n= Σ(持仓数量 × 价格 × 乘数 × 保证金率)",
-        
-        "margin_ratio": "保证金占用比\n= 占用保证金 / 前日余额\n表示资金使用效率",
-        
-        "update_time": "最后一次数据更新时刻\n从数据文件中提取的时间戳",
-        
-        "time": "当前仪表板查询时刻\n系统当前时间",
-    }
-    
     # 第一步：显示表格
-    # st.dataframe(styled_df, use_container_width=True)
     st.dataframe(styled_df, width="stretch")
-    
-    # 第二步：添加可展开的字段说明区域
+
     st.markdown("---")
-    
-    with st.expander("📖 Overview 字段完整说明", expanded=False):
-        st.markdown("""
-        ### 字段解释速查表
-        """)
+
+    with st.expander("Overview 字段完整说明", expanded=False):
         
-        # 使用两列布局，左边字段名，右边说明
-        col1, col2 = st.columns([1, 3])
-        
-        with col1:
-            st.markdown("#### 字段名")
-            for field_name in column_descriptions.keys():
-                st.markdown(f"`{field_name}`")
-        
-        with col2:
-            st.markdown("#### 说明")
-            for field_name in column_descriptions.keys():
-                st.markdown(f"{column_descriptions[field_name]}")
-        
+        # ⭐ 改为 DataFrame 展示，天然对齐
+        field_data = {
+            "字段名": [
+                "market", "product", "broker", "init_capital",
+                "balance", "pre_balance", "market_value", "cost",
+                "ret", "pnl", "max_margin", "product_low_limit",
+                "margin", "margin_ratio", "update_time", "time",
+                "deposit_withdraw", "warnings",
+            ],
+            "分类": [
+                "市场", "市场", "市场", "资金",
+                "资金", "资金", "持仓", "资金",
+                "资金", "资金", "风险", "风险",
+                "风险", "风险", "时间", "时间",
+                "资金", "系统",
+            ],
+            "说明": [
+                "市场类型：cncf=商品期货 / cnif=股指期货",
+                "产品/策略代码，如 bgt_ax1h / jz1h / ly1h / zz1h",
+                "交易券商：dz=东正 / zx=中信",
+                "初始资金/策略规模 = pre_balance × aum_mul（或自定义公式）",
+                "当前账户余额 = 前日余额 + 入金 - 出金 + 盈亏 - 手续费",
+                "前一交易日的账户余额，用于计算初始资金基数",
+                "当前持仓市值 = sum(合约数量 × 市场价格 × 合约乘数)",
+                "累计手续费，交易费用总和",
+                "总回报/盈亏 = 平仓盈亏 + 持仓盈亏",
+                "收益率 = (ret - cost) / init_capital × 100%",
+                "最大单合约保证金占比 = max(单合约保证金) / 余额，警告阈值 > 25%",
+                "持仓市值占比 = 持仓市值 / 账户余额，警告阈值 < 0.8",
+                "当前占用保证金 = sum(持仓数量 × 价格 × 乘数 × 保证金率)",
+                "保证金占用比 = 占用保证金 / 前日余额",
+                "最后一次数据更新时刻，从数据文件中提取的时间戳",
+                "当前仪表板查询时刻（系统时间）",
+                "净入出金 = 入金 - 出金",
+                "数据加载或计算过程中的警告信息",
+            ],
+        }
+
+        desc_df = pd.DataFrame(field_data)
+        st.dataframe(desc_df, width="stretch", hide_index=True)
+
         st.markdown("---")
-        
-        # 分类说明
         st.markdown("""
-        ### 按用途分类
-        
-        **📊 资金相关**
-        - `init_capital`: 策略初始规模
-        - `balance`: 当前余额
-        - `pre_balance`: 前日余额
-        - `cost`: 手续费
-        - `ret`: 回报
-        - `pnl`: 收益率
-        
-        **📈 持仓相关**
-        - `product`: 产品名称
-        - `market_value`: 持仓市值
-        - `market`: 市场类型
-        
-        **⚙️ 风险指标**
-        - `max_margin`: 单合约保证金占比 (警告: > 25%)
-        - `product_low_limit`: 流动性限制 (警告: < 0.8)
-        - `margin`: 占用保证金
-        - `margin_ratio`: 保证金占用比
-        
-        **⏰ 时间相关**
-        - `update_time`: 数据更新时间
-        - `time`: 查询时间
-        
-        **🏢 其他**
-        - `broker`: 券商
-        - `deposit_withdraw`: 入出金
+**风险阈值速查：**
+- `max_margin` > **25%** → 单合约保证金过高 (红色告警)
+- `product_low_limit` < **0.8** → 流动性不足 (红色告警，ly1h 为黄色)
         """)
 
 
