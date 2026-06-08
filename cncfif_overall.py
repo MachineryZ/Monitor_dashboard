@@ -6,8 +6,9 @@ import datetime
 import pandas as pd
 import numpy as np
 import streamlit as st
-
+from streamlit_tooltip import st_tooltip
 from typing import List
+
 # ─────────────────────────────────────────────
 # CONSTANTS & CONFIGURATION
 # ─────────────────────────────────────────────
@@ -17,19 +18,17 @@ CALENDAR_PATH = "/cpfs/intrastats/calendar"
 _price_cache: dict[str, float] = {}
 
 # ── 商品期货 (commodity / cncf) 交易时段 ─────
-# 每条: (start, end, crosses_midnight)
 COMMODITY_SESSIONS = [
     (datetime.time(9,  0),  datetime.time(10, 15), False),
     (datetime.time(10, 30), datetime.time(11, 30), False),
     (datetime.time(13, 30), datetime.time(15,  0), False),
-    (datetime.time(21,  0), datetime.time(2,  30), True ),   # 夜盘，跨午夜
+    (datetime.time(21,  0), datetime.time(2,  30), True ),
 ]
 
 # ── 股指期货 (futures / cnif) 交易时段 ────────
 FUTURES_SESSIONS = [
     (datetime.time(9,  30), datetime.time(11, 30), False),
     (datetime.time(13,  0), datetime.time(15,  0), False),
-    # 股指无夜盘
 ]
 
 # ── Product registry ──────────────────────────
@@ -41,54 +40,130 @@ PRODUCT_CONFIGS = [
         "market":       "commodity",
         "init_capital": 0,
         "aum_mul":      4.0,
+        "db_product":   "commodity_melt_bgt",
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx",
         "broker":       "zx",
-        "product": "shjq",
-        "market": "commodity",
+        "product":      "shjq",
+        "market":       "commodity",
         "init_capital": 0,
+        "db_product":   "cncf_melt_shjq_zx",
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx",
         "broker":       "zx",
-        "product": "shph1h",
-        "market": "commodity",
+        "product":      "shph1h",
+        "market":       "commodity",
         "init_capital": 0,
+        "db_product":   "commodity_melt_shph_zx",
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
         "broker":       "zx",
-        "product": "zz1h",
-        "market": "commodity",
+        "product":      "zz1h",
+        "market":       "commodity",
         "init_capital": 0,
         "aum_formula":  lambda pb, bal: 25_000_000 + (bal - 6_000_000),
+        "db_product":   "commodity_melt",
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
         "broker":       "dz",
-        "product": "jz1h",
-        "market": "futures",
+        "product":      "jz1h",
+        "market":       "futures",
         "init_capital": 0,
         "aum_mul":      4.0,
+        "db_product":   None,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
         "broker":       "dz",
         "product":      "ly1h",
-        "market": "futures",
+        "market":       "futures",
         "init_capital": 0,
         "aum_mul":      5.0,
+        "db_product":   None,
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "zx",
-        "product": "zz1h",
-        "market": "futures",
+        "product":      "zz1h",
+        "market":       "futures",
         "init_capital": 0,
         "aum_mul":      4.7858,
+        "db_product":   None,
     },
 ]
+
+
+# ─────────────────────────────────────────────
+# CLICKHOUSE CLIENT
+# ─────────────────────────────────────────────
+
+_ch_client = None
+
+def get_ch_client():
+    """获取 ClickHouse 连接"""
+    global _ch_client
+    if _ch_client is None:
+        try:
+            from clickhouse_connect.driver import create_client
+            _ch_client = create_client(
+                host='10.51.4.21',
+                port=8123,
+                username='dashboard',
+                password='123456',
+                database='cffex_zx'
+            )
+        except Exception as e:
+            print(f"ClickHouse connection failed: {e}")
+            return None
+    return _ch_client
+
+
+def get_product_clip(product_name: str) -> int | None:
+    """根据 product_name 查询 clip"""
+    if not product_name:
+        return None
+    
+    try:
+        client = get_ch_client()
+        if client is None:
+            return None
+        
+        result = client.query_df(
+            f"SELECT clip FROM commodity_meta.product_clip "
+            f"WHERE product_name = '{product_name}' LIMIT 1"
+        )
+        if not result.empty:
+            return int(result.iloc[0]["clip"])
+    except Exception as e:
+        print(f"get_product_clip error for {product_name}: {e}")
+    
+    return None
+
+
+def get_product_uplimit_coef(product_name: str) -> float | None:
+    """根据 product_name 查询 uplimit coef"""
+    if not product_name:
+        return None
+    
+    try:
+        client = get_ch_client()
+        if client is None:
+            return None
+        
+        result = client.query_df(
+            f"SELECT coef FROM commodity_meta.product_uplimit_coef "
+            f"WHERE product_name = '{product_name}' LIMIT 1"
+        )
+        if not result.empty:
+            return float(result.iloc[0]["coef"])
+    except Exception as e:
+        print(f"get_product_uplimit_coef error for {product_name}: {e}")
+    
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -126,7 +201,6 @@ def _time_in_session(t: datetime.time, start: datetime.time,
                      end: datetime.time, crosses_midnight: bool) -> bool:
     """判断时刻 t 是否在 [start, end] 时段内（支持跨午夜）"""
     if crosses_midnight:
-        # 跨午夜：t >= start（晚上）或 t <= end（凌晨）
         return t >= start or t <= end
     else:
         return start <= t <= end
@@ -191,12 +265,9 @@ def file_exists_for_date(path: str, date_int: int) -> bool:
     fp = os.path.join(path, f"account_info_{date_int}.csv")
     return os.path.exists(fp) and os.path.getsize(fp) > 0
 
+
 def _extract_latest_update_time(*dfs: pd.DataFrame | None) -> str:
-    """
-    从若干 DataFrame 中提取 update_time 列的最大值。
-    支持字符串格式（直接做字符串最大值）和 datetime 格式。
-    返回最晚的 update_time 字符串，若无则返回空串。
-    """
+    """从若干 DataFrame 中提取 update_time 列的最大值"""
     candidates: list[str] = []
     for df in dfs:
         if df is None or df.empty:
@@ -207,24 +278,12 @@ def _extract_latest_update_time(*dfs: pd.DataFrame | None) -> str:
         col = col[col.str.strip() != ""]
         if col.empty:
             continue
-        # 字符串比较对 "YYYY-MM-DD HH:MM:SS" / "YYYYMMDD HHMMSS" 等格式均有效
         candidates.append(col.max())
     return max(candidates) if candidates else ""
 
 
 # ─────────────────────────────────────────────
 # 核心：get_data_date
-#
-# 返回 (data_date: int, label_suffix: str)
-#
-# 规则：
-#   1. 市场开盘中
-#      a. 商品夜盘且当前时刻在午夜前（21:00–23:59）
-#         → data_date = next_trade_day（夜盘数据归属下一交易日）
-#      b. 其他开盘时段
-#         → data_date = current_date
-#   2. 市场关闭中
-#      → 优先尝试 current_date；若文件不存在，fallback 到 prev_date
 # ─────────────────────────────────────────────
 
 def get_data_date(
@@ -235,20 +294,16 @@ def get_data_date(
 ) -> tuple[int, str]:
     """
     返回 (data_date, label_suffix)
-    label_suffix 用于在 dashboard 的 time 字段追加说明。
     """
     now = datetime.datetime.now()
     t   = now.time()
 
     if market_open:
-        # 商品夜盘，午夜前（21:00–23:59）→ 数据归属下一交易日
         if market == "commodity" and is_commodity_night_session_pre_midnight(t):
             next_td = get_next_trade_date(current_date)
             return next_td, f" (night→{next_td})"
-        # 其余开盘时段（白天、凌晨夜盘结束前）→ 当天
         return current_date, ""
 
-    # ── 关盘：优先用当天，fallback 到前一交易日 ──────────────
     if file_exists_for_date(path, current_date):
         return current_date, " (today data)"
     prev = get_previous_trade_date(current_date)
@@ -261,7 +316,7 @@ def get_data_date(
 
 def get_margin_file_path(path: str, market: str, data_date: int) -> str:
     if market == "commodity":
-        return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_inline_ine.csv"
+        return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit.csv"
     mapping = {
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":
             f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{data_date}.csv",
@@ -342,16 +397,91 @@ def get_price(instrument: str) -> float | None:
 
 
 # ─────────────────────────────────────────────
+# RISK POSITION LOADER (需求4)
+# ─────────────────────────────────────────────
+
+def load_risk_position(market: str, product: str, data_date: int) -> dict[str, float] | None:
+    """
+    读取 risk_position（目标仓位）
+    
+    Args:
+        market: "commodity" 或 "futures"
+        product: 产品名称
+        data_date: YYYYMMDD 格式
+    
+    Returns:
+        {instrument: risk_position_value} 字典，或 None
+    """
+    result = {}
+    
+    if market == "commodity":
+        # cncf 的 8 个目录，用户可根据活跃策略修改路径
+        cncf_dirs = [
+            "cncf_melt_bgt_dz_bohr",
+            "cncf_melt_bgt_dz_galileo",
+            "cncf_melt_shjq_zx_bohr",
+            "cncf_melt_shjq_zx_galileo",
+            "cncf_melt_shph1h_zx_bohr",
+            "cncf_melt_shph1h_zx_galileo",
+            "cncf_melt_zhizeng_dz_bohr",
+            "cncf_melt_zhizeng_dz_galileo",
+        ]
+        
+        for dir_name in cncf_dirs:
+            csv_path = f"/cpfs/prod/prod_log/china_future/cncf/{dir_name}/{data_date}.csv"
+            df, err = safe_read_csv(csv_path)
+            if err or df is None or df.empty:
+                continue
+            
+            for _, row in df.iterrows():
+                try:
+                    inst = str(row.get("instrument", "")).strip()
+                    all_stats_str = str(row.get("all_stats", "")).strip()
+                    
+                    # 解析 "[0.123]" → 0.123
+                    all_stats_str = all_stats_str.strip("[]").strip()
+                    if all_stats_str:
+                        value = float(all_stats_str)
+                        if inst:
+                            result[inst] = value
+                except (ValueError, TypeError, AttributeError):
+                    continue
+    
+    elif market == "futures":
+        # cnif 的 3 个策略
+        strategy_mapping = {
+            "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
+            "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
+            "zz1h": "cnif_short_zz1h_dz_dashboard_bohr",
+        }
+        
+        if product not in strategy_mapping:
+            return None
+        
+        dir_name = strategy_mapping[product]
+        csv_path = f"/cpfs/prod/prod_log/china_future/cnif/{dir_name}/{data_date}.csv"
+        df, err = safe_read_csv(csv_path)
+        if err or df is None or df.empty:
+            return None
+        
+        for _, row in df.iterrows():
+            try:
+                inst = str(row.get("instrument", "")).strip()
+                value = float(row.get("value", 0))
+                if inst:
+                    result[inst] = value
+            except (ValueError, TypeError):
+                continue
+    
+    return result if result else None
+
+
+# ─────────────────────────────────────────────
 # STYLERS
 # ─────────────────────────────────────────────
 
 def style_product_low_limit(row: pd.Series) -> list[str]:
-    """
-    按行判断 product_low_limit 的颜色
-    - Linyin 1Hao < 0.8 黄色
-    - 其他产品 < 0.8 红色
-    - 其他情况 无样式
-    """
+    """按行判断 product_low_limit 的颜色"""
     styles = [""] * len(row)
     if "product_low_limit" not in row.index:
         return styles
@@ -370,32 +500,15 @@ def style_product_low_limit(row: pd.Series) -> list[str]:
 
 def style_max_margin(val):
     try:
-        if float(val[:-1]/100) > 0.25:
+        if float(val.rstrip('%')) / 100 > 0.25:
             return "background-color: #ff4b4b; color: white"
     except (ValueError, TypeError):
         pass
     return ""
 
 
-def style_nonzero_yellow(val):
-    try:
-        if abs(float(val)) > 1e-6:
-            return "background-color: #ffd700; color: black"
-    except (ValueError, TypeError):
-        pass
-    return ""
-
-
-def style_margin_ratio(val):
-    try:
-        if abs(float(val)) > 0.65:
-            return "background-color: #ffd700; color: black"
-    except (ValueError, TypeError):
-        pass
-    return ""
-
 # ─────────────────────────────────────────────
-# CORE: calculate_product
+# CORE: calculate_product (改进版)
 # ─────────────────────────────────────────────
 
 SUMMARY_COLS = [
@@ -407,7 +520,6 @@ SUMMARY_COLS = [
     "margin", "margin_ratio",
     "update_time", "time", "warnings", "deposit_withdraw", "is_market_open",
 ]
-# max_margin = max_margin
 
 DEFAULT_SUMMARY = {
     "market": "",
@@ -431,6 +543,112 @@ DEFAULT_SUMMARY = {
 }
 
 
+def _get_last_trade_time_adjusted(
+    trade_df: pd.DataFrame | None,
+    inst: str,
+    data_date: int,
+    current_date: int,
+    market: str,
+) -> str:
+    """
+    获取最后成交时间，应用夜盘日期调整逻辑（需求2）
+    规则：
+    - 夜盘（>= 21:00） → 使用前一个交易日 + 交易时间
+    - 否则 → data_date + 交易时间
+    - 如果时间为空 → 使用前一交易日 + 20:00:00
+    """
+    if trade_df is None or trade_df.empty:
+        return ""
+
+    inst_col = (
+        "instrument_id" if "instrument_id" in trade_df.columns
+        else ("instrument" if "instrument" in trade_df.columns else None)
+    )
+    
+    if inst_col is None:
+        return ""
+
+    t_rows = trade_df[trade_df[inst_col] == inst]
+    if t_rows.empty:
+        return ""
+
+    time_col = (
+        "trade_time"  if "trade_time"  in t_rows.columns else
+        "update_time" if "update_time" in t_rows.columns else
+        None
+    )
+    
+    if time_col is None:
+        return ""
+
+    try:
+        trade_time_raw = t_rows[time_col].iloc[-1]
+        trade_time_str = str(trade_time_raw).strip()
+        
+        if not trade_time_str or trade_time_str.lower() == "nan":
+            # 数据为空 → 使用前一交易日 + 20:00:00
+            prev_date = get_previous_trade_date(data_date)
+            return f"{prev_date} 20:00:00"
+        
+        # 提取时间部分 (最后8位或冒号分隔的部分)
+        if ':' in trade_time_str:
+            # 格式: "HH:MM:SS" 或 "YYYY-MM-DD HH:MM:SS"
+            time_part = trade_time_str.split()[-1]  # 取最后一个空格后的部分
+        else:
+            # 格式: "HHMMSS" 或 "YYYYMMDDhhmmss"
+            time_part = trade_time_str[-6:] if len(trade_time_str) >= 6 else trade_time_str
+            time_part = f"{time_part[0:2]}:{time_part[2:4]}:{time_part[4:6]}"
+        
+        hour = int(time_part[:2])
+        
+        # 夜盘判断：21:00 之后
+        if hour >= 21:
+            # 使用前一个交易日 + 交易时间
+            prev_date = get_previous_trade_date(data_date)
+            return f"{prev_date} {time_part}"
+        else:
+            # 普通时段：data_date + 交易时间
+            return f"{data_date} {time_part}"
+    
+    except (ValueError, IndexError, AttributeError):
+        pass
+    
+    return str(trade_time_str)
+
+
+def _check_risk_position_match(
+    actual_pos: float,
+    risk_pos: float | None,
+) -> str:
+    """
+    检查实际仓位和目标仓位是否匹配
+    
+    返回: "matched", "yellow", "red"
+    
+    规则（需求4）:
+    - 实际仓位有，目标仓位没有 → yellow
+    - 实际仓位没有，目标仓位有 → yellow
+    - 两者都有，但不相等 → red
+    - 其他 → matched
+    """
+    if risk_pos is None:
+        # 目标仓位无数据
+        if actual_pos != 0:
+            return "yellow"  # 实际有，目标没有
+        return "matched"
+    
+    if actual_pos == 0 and risk_pos != 0:
+        return "yellow"  # 实际没有，目标有
+    
+    if actual_pos != 0 and risk_pos == 0:
+        return "yellow"  # 实际有，目标没有
+    
+    if abs(actual_pos - risk_pos) > 1e-6:
+        return "red"  # 两者都有但不相等
+    
+    return "matched"
+
+
 def calculate_product(
     cfg: dict,
     path: str,
@@ -442,20 +660,20 @@ def calculate_product(
     shared_sd_df: pd.DataFrame | None,
     shared_future_df: pd.DataFrame | None,
     shared_margin_df: pd.DataFrame | None,
-) -> tuple[dict, pd.DataFrame | None]:
-
+) -> tuple[dict, pd.DataFrame | None, dict]:
+    """
+    返回 (summary_dict, detail_df, detail_status_dict)
+    detail_status_dict 用于标记展开器标题的颜色
+    """
+    
     warnings_list: list[str] = []
     data = dict(DEFAULT_SUMMARY)
     data["market"]   = "cncf" if market == "commodity" else "cnif"
-    data["product"]   = product
-    data["broker"]         = broker
-    data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
+    data["product"]  = product
+    data["broker"]   = broker
+    data["time"]     = datetime.datetime.now().strftime("%H:%M:%S")
     data["is_market_open"] = market_open
 
-    # ── 确定读取哪天的数据文件 ─────────────────────────────────
-    # get_data_date 内部已处理：
-    #   • 商品夜盘21:00-23:59 → next_trade_day
-    #   • 关盘 → 优先 current_date，fallback prev_date
     data_date, time_suffix = get_data_date(market, path, current_date, market_open)
     data["time"] += time_suffix
 
@@ -466,18 +684,25 @@ def calculate_product(
         warnings_list.append(ai_err)
         data["init_capital"] = 0
         data["warnings"]     = " | ".join(warnings_list)
-        return data, None
+        return data, None, {"has_warning": True, "has_risk": False}
+
     if ai_df.empty:
         warnings_list.append(f"Header-only file (using defaults): {ai_path}")
         balance = pre_balance = deposit = withdraw = fee = 0.0
+        margin = 0.0
     else:
-        balance      = float(ai_df["balance"].iloc[0])
-        pre_balance  = float(ai_df["pre_balance"].iloc[0])
-        deposit      = float(ai_df["deposit"].iloc[0])
-        withdraw     = float(ai_df["withdraw"].iloc[0])
-        fee          = float(ai_df["fee"].iloc[0])
-        margin       = float(ai_df["curr_margin"].iloc[0])
-        margin_ratio = margin / pre_balance
+        try:
+            balance      = float(ai_df["balance"].iloc[0])
+            pre_balance  = float(ai_df["pre_balance"].iloc[0])
+            deposit      = float(ai_df["deposit"].iloc[0])
+            withdraw     = float(ai_df["withdraw"].iloc[0])
+            fee          = float(ai_df["fee"].iloc[0])
+            margin       = float(ai_df["curr_margin"].iloc[0])
+            margin_ratio = margin / pre_balance if pre_balance > 0 else 0
+        except Exception as e:
+            warnings_list.append(f"account_info parsing error: {e}")
+            balance = pre_balance = fee = margin = 0.0
+            margin_ratio = 0
 
     data["margin_ratio"] = f"{100*margin_ratio:.2f}%"
     data["balance"]          = balance
@@ -494,7 +719,8 @@ def calculate_product(
     if pd_err:
         warnings_list.append(pd_err)
         data["warnings"] = " | ".join(warnings_list)
-        return data, None
+        return data, None, {"has_warning": True, "has_risk": False}
+
     if pd_df.empty:
         warnings_list.append(f"Header-only file (using defaults): {pd_path}")
         pd_df = pd.DataFrame(columns=[
@@ -502,10 +728,14 @@ def calculate_product(
             "position_profit", "close_profit", "pre_settlement_price",
         ])
 
-    data["ret"] = float(
-        (pd_df.get("position_profit", pd.Series([0])).fillna(0)
-         + pd_df.get("close_profit",  pd.Series([0])).fillna(0)).sum()
-    )
+    try:
+        data["ret"] = float(
+            (pd_df.get("position_profit", pd.Series([0])).fillna(0)
+             + pd_df.get("close_profit",  pd.Series([0])).fillna(0)).sum()
+        )
+    except Exception as e:
+        warnings_list.append(f"PnL calculation error: {e}")
+        data["ret"] = 0.0
 
     # ── 3. PnL ───────────────────────────────────────────────
     if init_capital > 0:
@@ -518,10 +748,34 @@ def calculate_product(
     future_df = shared_future_df
     margin_df = shared_margin_df
 
-    # ── 4. Per-instrument calculations ───────────────────────
+    # ── 4. 加载 risk_position 和数据库参数 ────────────────────
+    risk_position_map = load_risk_position(market, product, data_date)
+    
+    db_product = cfg.get("db_product")
+    clip = get_product_clip(db_product) if db_product else 0
+    uplimit_coef = get_product_uplimit_coef(db_product) if db_product else 0
+    
+    # 读取 uplimit_holding_position
+    uplimit_data = {}
+    if market == "commodity":
+        uplimit_csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
+        uplimit_df, _ = safe_read_csv(uplimit_csv_path)
+        if uplimit_df is not None and not uplimit_df.empty:
+            if "instrument" in uplimit_df.columns and "uplimit_holding_position" in uplimit_df.columns:
+                try:
+                    for _, row in uplimit_df.iterrows():
+                        inst = str(row["instrument"]).strip()
+                        uplimit_hp = float(row.get("uplimit_holding_position", 0))
+                        uplimit_data[inst] = uplimit_hp
+                except Exception as e:
+                    print(f"uplimit_data parsing error: {e}")
+
+    # ── 5. Per-instrument calculations ───────────────────────
     market_value          = 0.0
     instrument_margin_max = 0.0
     detail_rows: list[dict] = []
+    has_warning = False
+    has_risk = False
 
     instruments = (
         pd_df["instrument_id"].dropna().unique().tolist()
@@ -537,78 +791,157 @@ def calculate_product(
     for inst in instruments:
         inst_warnings: list[str] = []
 
-        long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
-        short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
-        long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
-        short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
+        try:
+            long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
+            short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
+            long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
+            short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
+        except Exception as e:
+            inst_warnings.append(f"position parsing error: {e}")
+            long_pos = short_pos = 0.0
+            has_warning = True
 
-        net_pos    = long_pos - short_pos
+        net_pos = long_pos - short_pos
         margin_pos = max(long_pos, short_pos)
 
-        cp        = float(pd_df[pd_df["instrument_id"] == inst]["close_profit"].fillna(0).sum())
-        pp        = float(pd_df[pd_df["instrument_id"] == inst]["position_profit"].fillna(0).sum())
-        total_pnl = cp + pp
-
+        # 获取静态信息
         multiplier = 1.0
         exchange   = ""
-        if sd_df is not None and not sd_df.empty:
-            sd_row = sd_df[sd_df["instrument"] == inst]
-            if not sd_row.empty:
-                multiplier = float(sd_row["multiplier"].iloc[0])
-                exchange   = (
-                    str(sd_row["exchange"].iloc[0])
-                    if "exchange" in sd_row.columns else ""
-                )
-            else:
-                inst_warnings.append(f"no static info for {inst}")
-        else:
-            inst_warnings.append(f"static info file unavailable for {inst}")
+        try:
+            if sd_df is not None and not sd_df.empty:
+                sd_row = sd_df[sd_df["instrument"] == inst]
+                if not sd_row.empty:
+                    multiplier = float(sd_row["multiplier"].iloc[0])
+                    exchange   = (
+                        str(sd_row["exchange"].iloc[0])
+                        if "exchange" in sd_row.columns else ""
+                    )
+                else:
+                    inst_warnings.append(f"no static info for {inst}")
+                    has_warning = True
+        except Exception as e:
+            inst_warnings.append(f"static info error: {e}")
+            has_warning = True
 
+        # 保证金比率
         margin_ratio = 0.0
-        if margin_df is not None and not margin_df.empty:
-            m_row = margin_df[margin_df["instrument"] == inst]
-            if not m_row.empty:
-                margin_ratio = float(m_row["margin_ratio"].iloc[0])
+        try:
+            if margin_df is not None and not margin_df.empty:
+                m_row = margin_df[margin_df["instrument"] == inst]
+                if not m_row.empty:
+                    margin_ratio = float(m_row["margin_ratio"].iloc[0])
+        except Exception as e:
+            inst_warnings.append(f"margin_ratio error: {e}")
+            has_warning = True
 
+        # 价格
         price = get_price(inst)
         if price is None:
-            inst_warnings.append(f"no price available for {inst} (using 0)")
+            inst_warnings.append(f"no price available for {inst}")
+            has_warning = True
             price = 0.0
 
-        inst_gross_notional   = (long_pos + short_pos) * price * multiplier
-        market_value         += inst_gross_notional
-        inst_margin           = price * margin_pos * multiplier * margin_ratio
-        instrument_margin_max = max(inst_margin, instrument_margin_max)
-
-        last_trade_time = ""
-        if trade_df is not None and not trade_df.empty:
-            inst_col = (
-                trade_df.get("instrument_id", None)
-                if "instrument_id" in trade_df.columns
-                else trade_df.get("instrument", None)
+        # 最后成交时间
+        try:
+            last_trade_time = _get_last_trade_time_adjusted(
+                trade_df, inst, data_date, current_date, market
             )
-            if inst_col is not None:
-                t_rows = trade_df[inst_col == inst]
-                if not t_rows.empty:
-                    time_col = (
-                        "trade_time"  if "trade_time"  in t_rows.columns else
-                        "update_time" if "update_time" in t_rows.columns else
-                        None
-                    )
-                    if time_col:
-                        last_trade_time = str(t_rows[time_col].iloc[-1])
+        except Exception as e:
+            inst_warnings.append(f"trade_time error: {e}")
+            has_warning = True
+            last_trade_time = ""
 
-        detail_rows.append({
-            "instrument":        inst,
-            "position":          int(net_pos),
-            "close_profit":      round(cp, 2),
-            "position_profit":   round(pp, 2),
-            "total_pnl":         round(total_pnl, 2),
-            "instrument_margin": round(inst_margin, 2),
-            "exchange":          exchange,
-            "last_trade_time":   last_trade_time,
-            "_warnings":         "; ".join(inst_warnings),
-        })
+        # risk_position
+        try:
+            risk_pos = risk_position_map.get(inst) if risk_position_map else None
+        except Exception as e:
+            inst_warnings.append(f"risk_position error: {e}")
+            has_warning = True
+            risk_pos = None
+
+        # uplimit
+        uplimit_value = None
+        try:
+            if inst in uplimit_data and uplimit_coef and uplimit_coef > 0:
+                uplimit_value = uplimit_data[inst] * uplimit_coef
+        except Exception as e:
+            inst_warnings.append(f"uplimit error: {e}")
+            has_warning = True
+
+        # ── 长仓行（需求1：分离 LONG/SHORT）─────────────────────
+        if long_pos > 0 or (long_pos == 0 and short_pos == 0):
+            try:
+                cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
+                pp_long = float(long_rows["position_profit"].iloc[0]) if not long_rows.empty else 0.0
+                total_pnl_long = cp_long + pp_long
+                
+                inst_margin_long = price * long_pos * multiplier * margin_ratio
+                market_value += price * long_pos * multiplier
+                instrument_margin_max = max(inst_margin_long, instrument_margin_max)
+                
+                # 检查 risk_position 匹配
+                risk_match = _check_risk_position_match(long_pos, risk_pos)
+                if risk_match == "red":
+                    has_risk = True
+                elif risk_match == "yellow":
+                    has_warning = True
+                
+                detail_rows.append({
+                    "instrument":        inst,
+                    "position":          int(long_pos),
+                    "position_type":     "LONG",
+                    "close_profit":      round(cp_long, 2),
+                    "position_profit":   round(pp_long, 2),
+                    "total_pnl":         round(total_pnl_long, 2),
+                    "instrument_margin": round(inst_margin_long, 2),
+                    "exchange":          exchange,
+                    "last_trade_time":   last_trade_time,
+                    "risk_position":     risk_pos,
+                    "risk_match":        risk_match,
+                    "clip":              clip,
+                    "uplimit":           round(uplimit_value, 2) if uplimit_value else None,
+                    "_warnings":         "; ".join(inst_warnings),
+                })
+            except Exception as e:
+                inst_warnings.append(f"LONG row error: {e}")
+                has_warning = True
+
+        # ── 短仓行 ───────────────────────────────────────────
+        if short_pos > 0:
+            try:
+                cp_short = float(short_rows["close_profit"].iloc[0]) if not short_rows.empty else 0.0
+                pp_short = float(short_rows["position_profit"].iloc[0]) if not short_rows.empty else 0.0
+                total_pnl_short = cp_short + pp_short
+                
+                inst_margin_short = price * short_pos * multiplier * margin_ratio
+                market_value += price * short_pos * multiplier
+                
+                # 检查 risk_position 匹配（对于 SHORT，传负数）
+                risk_match = _check_risk_position_match(-short_pos, risk_pos)
+                if risk_match == "red":
+                    has_risk = True
+                elif risk_match == "yellow":
+                    has_warning = True
+                
+                detail_rows.append({
+                    "instrument":        inst,
+                    "position":          -int(short_pos),
+                    "position_type":     "SHORT",
+                    "close_profit":      round(cp_short, 2),
+                    "position_profit":   round(pp_short, 2),
+                    "total_pnl":         round(total_pnl_short, 2),
+                    "instrument_margin": 0.0,  # 保证金已在 LONG 行显示
+                    "exchange":          exchange,
+                    "last_trade_time":   last_trade_time,
+                    "risk_position":     risk_pos,
+                    "risk_match":        risk_match,
+                    "clip":              clip,
+                    "uplimit":           None,  # 保证金已在 LONG 行
+                    "_warnings":         "; ".join(inst_warnings),
+                })
+            except Exception as e:
+                inst_warnings.append(f"SHORT row error: {e}")
+                has_warning = True
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
@@ -617,11 +950,24 @@ def calculate_product(
     data["max_margin"] = (
         instrument_margin_max / balance if balance > 0 else 0.0
     )
-    data["update_time"] = _extract_latest_update_time(ai_df, pd_df, sd_df)
+    try:
+        data["update_time"] = _extract_latest_update_time(ai_df, pd_df, sd_df)
+    except Exception as e:
+        warnings_list.append(f"update_time error: {e}")
+
     data["warnings"] = " | ".join(warnings_list)
 
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
-    return data, detail_df
+    
+    # 需求5：标题着色规则
+    # - 如果有任何警告或 try-except 错误 → yellow
+    # - 如果有 risk_position 不一致 → red
+    detail_status = {
+        "has_warning": has_warning,
+        "has_risk": has_risk,
+    }
+    
+    return data, detail_df, detail_status
 
 
 # ─────────────────────────────────────────────
@@ -636,7 +982,6 @@ def load_shared_files(
 ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, list[str]]:
     errors: list[str] = []
 
-    # 与 calculate_product 保持一致：用同一套日期决策
     data_date, _ = get_data_date(market, path, current_date, market_open)
 
     sd_path = get_static_info_path(market)
@@ -660,7 +1005,157 @@ def load_shared_files(
 
 
 # ─────────────────────────────────────────────
-# DASHBOARD
+# OVERVIEW TOOLTIP (需求7)
+# ─────────────────────────────────────────────
+
+def display_overview_with_tooltips(styled_df):
+    """
+    需求7：显示 Overview，并通过原生 Streamlit 添加字段说明
+    使用 Expander + 表格的组合方案（最推荐）
+    """
+    
+    # 字段说明词典
+    column_descriptions = {
+        "market": "市场类型\n- cncf = 商品期货\n- cnif = 股指期货",
+        
+        "product": "产品/策略代码\n示例: bgt_ax1h, jz1h, ly1h, zz1h",
+        
+        "broker": "交易券商名称\n示例: dz (东正), zx (中信)",
+        
+        "init_capital": "初始资金/策略规模\n计算: pre_balance × aum_mul\n或按指定公式计算",
+        
+        "balance": "当前账户余额\n= 前日余额 + 入金 - 出金 + 盈亏 - 手续费",
+        
+        "pre_balance": "前一交易日的账户余额\n用于计算初始资金基数",
+        
+        "market_value": "当前持仓市值\n= Σ(合约数量 × 市场价格 × 合约乘数)",
+        
+        "cost": "累计手续费\n交易费用总和",
+        
+        "ret": "总回报/盈亏\n= 平仓盈亏 + 持仓盈亏",
+        
+        "pnl": "收益率（百分比）\n= (ret - cost) / init_capital × 100%\n= 策略整体盈利能力",
+        
+        "max_margin": "最大单合约保证金占比\n= max(单合约保证金) / 账户余额\n⚠️ > 0.25 (25%) 时告警",
+        
+        "product_low_limit": "产品低流动性限制\n= 持仓市值 / 账户余额\n⚠️ < 0.8 (除 ly1h) 时告警",
+        
+        "margin": "当前占用的保证金\n= Σ(持仓数量 × 价格 × 乘数 × 保证金率)",
+        
+        "margin_ratio": "保证金占用比\n= 占用保证金 / 前日余额\n表示资金使用效率",
+        
+        "update_time": "最后一次数据更新时刻\n从数据文件中提取的时间戳",
+        
+        "time": "当前仪表板查询时刻\n系统当前时间",
+    }
+    
+    # 第一步：显示表格
+    st.dataframe(styled_df, use_container_width=True)
+    
+    # 第二步：添加可展开的字段说明区域
+    st.markdown("---")
+    
+    with st.expander("📖 Overview 字段完整说明", expanded=False):
+        st.markdown("""
+        ### 字段解释速查表
+        """)
+        
+        # 使用两列布局，左边字段名，右边说明
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            st.markdown("#### 字段名")
+            for field_name in column_descriptions.keys():
+                st.markdown(f"`{field_name}`")
+        
+        with col2:
+            st.markdown("#### 说明")
+            for field_name in column_descriptions.keys():
+                st.markdown(f"{column_descriptions[field_name]}")
+        
+        st.markdown("---")
+        
+        # 分类说明
+        st.markdown("""
+        ### 按用途分类
+        
+        **📊 资金相关**
+        - `init_capital`: 策略初始规模
+        - `balance`: 当前余额
+        - `pre_balance`: 前日余额
+        - `cost`: 手续费
+        - `ret`: 回报
+        - `pnl`: 收益率
+        
+        **📈 持仓相关**
+        - `product`: 产品名称
+        - `market_value`: 持仓市值
+        - `market`: 市场类型
+        
+        **⚙️ 风险指标**
+        - `max_margin`: 单合约保证金占比 (警告: > 25%)
+        - `product_low_limit`: 流动性限制 (警告: < 0.8)
+        - `margin`: 占用保证金
+        - `margin_ratio`: 保证金占用比
+        
+        **⏰ 时间相关**
+        - `update_time`: 数据更新时间
+        - `time`: 查询时间
+        
+        **🏢 其他**
+        - `broker`: 券商
+        - `deposit_withdraw`: 入出金
+        """)
+
+
+# ─────────────────────────────────────────────
+# BUILD SUMMARY TABLE
+# ─────────────────────────────────────────────
+
+def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
+    summary_rows = []
+
+    df_numeric = df.copy()
+    for col in ["balance", "pre_balance", "init_capital", "cost", "ret", "market_value"]:
+        if col in df_numeric.columns:
+            df_numeric[col] = pd.to_numeric(
+                df_numeric[col].astype(str).str.replace(",", ""),
+                errors="coerce",
+            ).fillna(0)
+
+    def _build_row(label: str, subset: pd.DataFrame) -> dict:
+        aum        = subset["init_capital"].sum()
+        cost       = subset["cost"].sum()
+        ret        = subset["ret"].sum()
+        total_pnl  = ret - cost
+        pnl_pct    = (total_pnl / aum * 100) if aum > 0 else 0.0
+        return {
+            "summary":    label,
+            "aum":        int(aum),
+            "cost":       int(cost),
+            "ret":        int(ret),
+            "total_pnl":  int(total_pnl),
+            "pnl":        f"{pnl_pct:.3f}%",
+        }
+
+    cncf_data = df_numeric[df_numeric["market"] == "cncf"]
+    cnif_data = df_numeric[df_numeric["market"] == "cnif"]
+
+    if not cncf_data.empty:
+        summary_rows.append(_build_row("cncf", cncf_data))
+    if not cnif_data.empty:
+        summary_rows.append(_build_row("cnif", cnif_data))
+    summary_rows.append(_build_row("cn_all", df_numeric))
+
+    summary_df = pd.DataFrame(summary_rows)
+    for col in ["aum", "cost", "ret", "total_pnl"]:
+        summary_df[col] = summary_df[col].apply(lambda x: f"{x:,}")
+
+    return summary_df
+
+
+# ─────────────────────────────────────────────
+# DASHBOARD MAIN
 # ─────────────────────────────────────────────
 
 def dashboard():
@@ -682,6 +1177,7 @@ def dashboard():
 
             summary_rows: list[dict]       = []
             detail_map:   dict[str, tuple] = {}
+            detail_status_map: dict[str, dict] = {}
             global_file_errors: list[str]  = []
             shared_cache: dict[str, tuple] = {}
 
@@ -692,8 +1188,6 @@ def dashboard():
 
                 market_open = is_market_open(ft)
 
-                # shared_cache key 需要同时区分 market 和 data_date
-                # （不同产品同类型的 data_date 相同，可以复用）
                 data_date_for_shared, _ = get_data_date(ft, path, current_date, market_open)
                 cache_key = (ft, data_date_for_shared)
 
@@ -712,12 +1206,12 @@ def dashboard():
                     global_file_errors.append(m_err)
 
                 try:
-                    row, detail_df = calculate_product(
+                    row, detail_df, detail_status = calculate_product(
                         cfg              = cfg,
                         path             = path,
                         broker           = cfg["broker"],
-                        product     = name,
-                        market     = ft,
+                        product          = name,
+                        market           = ft,
                         current_date     = current_date,
                         market_open      = market_open,
                         shared_sd_df     = sd_df,
@@ -728,19 +1222,20 @@ def dashboard():
                     row = dict(DEFAULT_SUMMARY)
                     row.update({
                         "market":   "cncf" if ft == "commodity" else "cnif",
-                        "product":   name,
-                        "broker":         cfg["broker"],
-                        "init_capital":   0,
-                        "time":           now.strftime("%H:%M:%S"),
-                        "warnings":       f"Calculation error: {calc_err}",
+                        "product":  name,
+                        "broker":   cfg["broker"],
+                        "init_capital": 0,
+                        "time":     now.strftime("%H:%M:%S"),
+                        "warnings": f"Calculation error: {calc_err}",
                         "is_market_open": market_open,
                     })
                     detail_df = None
+                    detail_status = {"has_warning": True, "has_risk": False}
 
                 summary_rows.append(row)
                 if detail_df is not None:
-                    detail_map[cfg["path"]] = (cfg, detail_df)  # ✅ 改：name → cfg["path"]
-
+                    detail_map[cfg["path"]] = (cfg, detail_df)
+                    detail_status_map[cfg["path"]] = detail_status
 
                 if market_open:
                     try:
@@ -749,12 +1244,12 @@ def dashboard():
                         if pll < 0.8 and name not in {"ly1h"}:
                             send_alert(
                                 f"[ALERT] product_low_limit < 0.8 | "
-                                f"broker={row['broker']} product={name} time={row['time']}"
+                                f"broker={row['broker']} product={name}"
                             )
                         if imu > 0.25:
                             send_alert(
                                 f"[ALERT] max_margin > 0.25 | "
-                                f"broker={row['broker']} product={name} time={row['time']}"
+                                f"broker={row['broker']} product={name}"
                             )
                     except (ValueError, TypeError):
                         pass
@@ -794,113 +1289,124 @@ def dashboard():
                     """
                     <div style="text-align:center; font-weight:bold; font-size:28px;
                                 margin-bottom:12px;">
-                        Futures Monitor Dashboard
+                        🚀 Futures Monitor Dashboard
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
 
                 st.markdown("---")
-                st.subheader("Trading Summary")
+                st.subheader("📊 Trading Summary")
                 summary_table = build_summary_table(df)
-                st.dataframe(summary_table, width="stretch")
+                st.dataframe(summary_table, use_container_width=True)
 
                 if global_file_errors:
                     st.error(
-                        "**Missing / unreadable files:**\n\n"
+                        "⚠️ **Missing / unreadable files:**\n\n"
                         + "\n\n".join(f"- {e}" for e in global_file_errors)
                     )
 
-                st.subheader("Overview")
-                st.dataframe(styled_df, width="stretch")
+                st.markdown("---")
+                st.subheader("📈 Overview")
+                display_overview_with_tooltips(styled_df)
 
                 st.markdown("---")
-                st.subheader("Per-Instrument Detail")
+                st.subheader("🔍 Per-Instrument Detail")
 
-                for prod_name, (cfg, ddf) in detail_map.items():
-                    title = (
-                        f"[{('cncf' if cfg['market'] == 'commodity' else 'cnif').upper()}] "
-                        f"{cfg['product']}  |  {cfg['broker']}"  # ✅ 改：prod_name → cfg['product']
-                    )
+                for prod_path, (cfg, ddf) in detail_map.items():
+                    market_label = "CNCF" if cfg["market"] == "commodity" else "CNIF"
+                    product_label = cfg["product"]
+                    broker_label = cfg["broker"]
+                    
+                    # 需求5：根据状态着色标题
+                    status = detail_status_map.get(prod_path, {"has_warning": False, "has_risk": False})
+                    has_risk = status.get("has_risk", False)
+                    has_warning = status.get("has_warning", False)
+                    
+                    if has_risk:
+                        title_color = "🔴"
+                    elif has_warning:
+                        title_color = "🟡"
+                    else:
+                        title_color = "🟢"
+                    
+                    title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
                     with st.expander(title, expanded=False):
                         display_cols = [
-                            "instrument", "position",
+                            "instrument", "position", "position_type",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin", "exchange", "last_trade_time",
+                            "risk_position", "clip", "uplimit",
                         ]
                         display_ddf = ddf[
                             [c for c in display_cols if c in ddf.columns]
                         ].copy()
 
-                        display_ddf.columns = [
-                            "合约名称", "持仓(+多/-空)",
-                            "平仓盈亏", "持仓盈亏", "当日盈亏",
-                            "单合约保证金", "交易所", "最后成交时间",
-                        ][: len(display_ddf.columns)]
+                        # 重新标记列名
+                        col_mapping = {
+                            "instrument": "合约名称",
+                            "position": "持仓数量",
+                            "position_type": "方向",
+                            "close_profit": "平仓盈亏",
+                            "position_profit": "持仓盈亏",
+                            "total_pnl": "当日盈亏",
+                            "instrument_margin": "保证金",
+                            "exchange": "交易所",
+                            "last_trade_time": "最后成交时间",
+                            "risk_position": "目标仓位",
+                            "clip": "Clip",
+                            "uplimit": "Uplimit",
+                        }
+                        display_ddf = display_ddf.rename(columns=col_mapping)
 
-                        st.dataframe(display_ddf, width="stretch")
+                        # 需求4：对风险仓位列进行着色
+                        def style_risk_position_row(row_idx):
+                            styles = [""] * len(display_ddf.columns)
+                            if "目标仓位" not in display_ddf.columns:
+                                return styles
+                            
+                            if "risk_match" in ddf.columns:
+                                risk_match = ddf.iloc[row_idx].get("risk_match", "matched")
+                                col_idx = display_ddf.columns.get_loc("目标仓位")
+                                
+                                if risk_match == "red":
+                                    styles[col_idx] = "background-color: #ff4b4b; color: white; font-weight: bold;"
+                                elif risk_match == "yellow":
+                                    styles[col_idx] = "background-color: #ffd700; color: black; font-weight: bold;"
+                            
+                            return styles
 
+                        # 应用行样式
+                        def apply_row_styles(df_styled):
+                            for row_idx in range(len(ddf)):
+                                styles = style_risk_position_row(row_idx)
+                                df_styled = df_styled.applymap(
+                                    lambda x: styles[list(display_ddf.columns).index(str(x))] 
+                                    if str(x) in display_ddf.columns else ""
+                                )
+                            return df_styled
+
+                        st.dataframe(display_ddf, use_container_width=True)
+
+                        # 显示警告信息
                         if "_warnings" in ddf.columns:
                             inst_warns = ddf[ddf["_warnings"].str.len() > 0]
                             if not inst_warns.empty:
-                                for _, wr in inst_warns.iterrows():
-                                    st.warning(f"[{wr['instrument']}] {wr['_warnings']}")
+                                st.warning("⚠️ **Instrument Warnings:**")
+                                for idx, wr in inst_warns.iterrows():
+                                    st.markdown(
+                                        f"- **{wr['instrument']}**: {wr['_warnings']}"
+                                    )
 
         except Exception as outer_err:
             with placeholder.container():
-                st.error(f"Dashboard loop error: {outer_err}")
+                st.error(f"❌ Dashboard loop error: {outer_err}")
+                import traceback
+                st.error(traceback.format_exc())
 
         time.sleep(10)
 
-
-# ─────────────────────────────────────────────
-# BUILD SUMMARY TABLE
-# ─────────────────────────────────────────────
-
-def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
-    summary_rows = []
-
-    df_numeric = df.copy()
-    for col in ["balance", "pre_balance", "init_capital", "cost", "ret", "market_value"]:
-        if col in df_numeric.columns:
-            df_numeric[col] = pd.to_numeric(
-                df_numeric[col].astype(str).str.replace(",", ""),
-                errors="coerce",
-            ).fillna(0)
-
-    def _build_row(label: str, subset: pd.DataFrame) -> dict:
-        aum        = subset["init_capital"].sum()
-        cost       = subset["cost"].sum()
-        ret        = subset["ret"].sum()
-        total_pnl  = ret - cost
-        pnl_pct    = (total_pnl / aum * 100) if aum > 0 else 0.0
-        return {
-            "summary":    label,
-            "aum":        int(aum),
-            "cost":       int(cost),
-            "ret": int(ret),
-            "total_pnl":  int(total_pnl),
-            "pnl":  f"{pnl_pct:.3f}%",
-        }
-
-    cncf_data = df_numeric[df_numeric["market"] == "cncf"]
-    cnif_data = df_numeric[df_numeric["market"] == "cnif"]
-
-    if not cncf_data.empty:
-        summary_rows.append(_build_row("cncf", cncf_data))
-    if not cnif_data.empty:
-        summary_rows.append(_build_row("cnif", cnif_data))
-    summary_rows.append(_build_row("cn_all", df_numeric))
-
-    summary_df = pd.DataFrame(summary_rows)
-    for col in ["aum", "cost", "ret", "total_pnl"]:
-        summary_df[col] = summary_df[col].apply(lambda x: f"{x:,}")
-
-    return summary_df
-
-
-# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     dashboard()
