@@ -194,17 +194,18 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
 
 
 # ─────────────────────────────────────────────
-# 新增：从CSV读取 uplimit_holding_position
+# 修复：从CSV读取 uplimit_holding_position
 # ─────────────────────────────────────────────
 
 def load_uplimit_holding_position() -> dict[str, float] | None:
     """
     从CSV文件读取 uplimit_holding_position
-    文件路径: /cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_inline_ine.csv
+    文件路径: /cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv
     
     :return: {instrument: uplimit_holding_position} 的字典
     """
-    csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_inline_ine.csv"
+    # ⭐ 修复：统一使用这个路径
+    csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     
     uplimit_data = {}
     
@@ -212,30 +213,43 @@ def load_uplimit_holding_position() -> dict[str, float] | None:
         df, err = safe_read_csv(csv_path)
         
         if err or df is None or df.empty:
-            print(f"load_uplimit_holding_position: {err}")
+            print(f"❌ load_uplimit_holding_position: {err}")
             return None
+        
+        print(f"✅ load_uplimit_holding_position: CSV loaded, shape={df.shape}, columns={list(df.columns)}")
         
         # 必须有 instrument 和 uplimit_holding_position 两列
         if "instrument" not in df.columns or "uplimit_holding_position" not in df.columns:
-            print(f"load_uplimit_holding_position: Missing required columns in {csv_path}")
+            print(f"❌ Missing required columns. Available: {list(df.columns)}")
             return None
         
-        # 逐行读取
-        for _, row in df.iterrows():
+        # 逐行读取 - ⭐ 修复：不过滤 uplimit_hp，包括 0 值
+        loaded_count = 0
+        for idx, row in df.iterrows():
             try:
                 inst = str(row["instrument"]).strip()
-                uplimit_hp = float(row.get("uplimit_holding_position", 0))
+                uplimit_hp_raw = row.get("uplimit_holding_position", 0)
                 
-                if inst and uplimit_hp > 0:
-                    uplimit_data[inst] = uplimit_hp
-            except (ValueError, TypeError) as e:
-                print(f"load_uplimit_holding_position: Parse error for row {row}: {e}")
+                # 允许 0 值和非零值
+                if inst:
+                    try:
+                        uplimit_hp = float(uplimit_hp_raw)
+                        uplimit_data[inst] = uplimit_hp
+                        loaded_count += 1
+                    except (ValueError, TypeError):
+                        print(f"⚠️ Skip row {idx}: uplimit_hp={uplimit_hp_raw} (not a valid number)")
+                        continue
+            except Exception as e:
+                print(f"⚠️ Parse error for row {idx}: {e}")
                 continue
         
+        print(f"✅ Loaded {loaded_count} instruments from uplimit CSV")
         return uplimit_data if uplimit_data else None
     
     except Exception as e:
-        print(f"load_uplimit_holding_position: {e}")
+        print(f"❌ load_uplimit_holding_position exception: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -253,10 +267,17 @@ def calculate_uplimit(instrument: str, product_name: str,
     # 1. 查询 coef
     coef = get_product_uplimit_coef(product_name)
     if coef is None:
+        print(f"⚠️ calculate_uplimit: coef is None for product {product_name}")
         return None
     
     # 2. 从 uplimit_data 获取 uplimit_holding_position
-    if uplimit_data is None or instrument not in uplimit_data:
+    if uplimit_data is None:
+        print(f"⚠️ calculate_uplimit: uplimit_data is None")
+        return None
+    
+    if instrument not in uplimit_data:
+        # ⭐ 修复：添加日志，便于调试
+        print(f"⚠️ calculate_uplimit: instrument '{instrument}' not in uplimit_data. Available: {list(uplimit_data.keys())[:5]}...")
         return None
     
     uplimit_hp = uplimit_data[instrument]
@@ -264,11 +285,11 @@ def calculate_uplimit(instrument: str, product_name: str,
     # 3. 计算 uplimit
     try:
         uplimit = uplimit_hp * coef
+        print(f"✅ uplimit for {instrument}: {uplimit_hp} × {coef} = {uplimit}")
         return uplimit
     except Exception as e:
-        print(f"calculate_uplimit error for {instrument}: {e}")
+        print(f"❌ calculate_uplimit error for {instrument}: {e}")
         return None
-
 
 
 # ─────────────────────────────────────────────
