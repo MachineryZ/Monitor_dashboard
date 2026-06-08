@@ -100,6 +100,10 @@ PRODUCT_CONFIGS = [
 # CLICKHOUSE CLIENT
 # ─────────────────────────────────────────────
 
+# ─────────────────────────────────────────────
+# CLICKHOUSE CLIENT & 数据库查询函数
+# ─────────────────────────────────────────────
+
 _ch_client = None
 
 def get_ch_client():
@@ -122,47 +126,149 @@ def get_ch_client():
 
 
 def get_product_clip(product_name: str) -> int | None:
-    """根据 product_name 查询 clip"""
+    """
+    根据 product_name 查询 clip
+    :param product_name: 产品名，如 'melt'
+    :return: clip 数值（int），如果不存在返回 None
+    """
     if not product_name:
         return None
     
-    try:
-        client = get_ch_client()
-        if client is None:
-            return None
-        
-        result = client.query_df(
-            f"SELECT clip FROM commodity_meta.product_clip "
-            f"WHERE product_name = '{product_name}' LIMIT 1"
-        )
-        if not result.empty:
-            return int(result.iloc[0]["clip"])
-    except Exception as e:
-        print(f"get_product_clip error for {product_name}: {e}")
+    client = get_ch_client()
+    if client is None:
+        return None
     
-    return None
+    query = f"""
+        SELECT clip
+        FROM commodity_meta.product_clip
+        WHERE product_name = '{product_name}'
+        LIMIT 1
+    """
+
+    try:
+        result = client.query_df(query)
+
+        if not result.empty:
+            clip = int(result.iloc[0]["clip"])
+            return clip
+        else:
+            return None
+
+    except Exception as e:
+        print(f"get_product_clip Query failed: {e}")
+        return None
 
 
 def get_product_uplimit_coef(product_name: str) -> float | None:
-    """根据 product_name 查询 uplimit coef"""
+    """
+    根据 product_name 查询 coef（uplimit系数）
+    :param product_name: 产品名，如 'melt'
+    :return: coef 数值（double），如果不存在返回 None
+    """
     if not product_name:
         return None
     
+    client = get_ch_client()
+    if client is None:
+        return None
+    
+    query = f"""
+        SELECT coef
+        FROM commodity_meta.product_uplimit_coef
+        WHERE product_name = '{product_name}'
+        LIMIT 1
+    """
+    
     try:
-        client = get_ch_client()
-        if client is None:
+        result = client.query_df(query)
+
+        if not result.empty:
+            coef = float(result.iloc[0]["coef"])
+            return coef
+        else:
+            return None
+
+    except Exception as e:
+        print(f"get_product_uplimit_coef Query failed: {e}")
+        return None
+
+
+# ─────────────────────────────────────────────
+# 新增：从CSV读取 uplimit_holding_position
+# ─────────────────────────────────────────────
+
+def load_uplimit_holding_position() -> dict[str, float] | None:
+    """
+    从CSV文件读取 uplimit_holding_position
+    文件路径: /cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_inline_ine.csv
+    
+    :return: {instrument: uplimit_holding_position} 的字典
+    """
+    csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_inline_ine.csv"
+    
+    uplimit_data = {}
+    
+    try:
+        df, err = safe_read_csv(csv_path)
+        
+        if err or df is None or df.empty:
+            print(f"load_uplimit_holding_position: {err}")
             return None
         
-        result = client.query_df(
-            f"SELECT coef FROM commodity_meta.product_uplimit_coef "
-            f"WHERE product_name = '{product_name}' LIMIT 1"
-        )
-        if not result.empty:
-            return float(result.iloc[0]["coef"])
-    except Exception as e:
-        print(f"get_product_uplimit_coef error for {product_name}: {e}")
+        # 必须有 instrument 和 uplimit_holding_position 两列
+        if "instrument" not in df.columns or "uplimit_holding_position" not in df.columns:
+            print(f"load_uplimit_holding_position: Missing required columns in {csv_path}")
+            return None
+        
+        # 逐行读取
+        for _, row in df.iterrows():
+            try:
+                inst = str(row["instrument"]).strip()
+                uplimit_hp = float(row.get("uplimit_holding_position", 0))
+                
+                if inst and uplimit_hp > 0:
+                    uplimit_data[inst] = uplimit_hp
+            except (ValueError, TypeError) as e:
+                print(f"load_uplimit_holding_position: Parse error for row {row}: {e}")
+                continue
+        
+        return uplimit_data if uplimit_data else None
     
-    return None
+    except Exception as e:
+        print(f"load_uplimit_holding_position: {e}")
+        return None
+
+
+def calculate_uplimit(instrument: str, product_name: str, 
+                     uplimit_data: dict[str, float] | None) -> float | None:
+    """
+    计算某个合约的 uplimit
+    
+    :param instrument: 合约代码
+    :param product_name: 产品名称（用于从数据库查询 coef）
+    :param uplimit_data: {instrument: uplimit_holding_position} 的字典
+    :return: uplimit 值，或 None 如果计算失败
+    """
+    
+    # 1. 查询 coef
+    coef = get_product_uplimit_coef(product_name)
+    if coef is None:
+        return None
+    
+    # 2. 从 uplimit_data 获取 uplimit_holding_position
+    if uplimit_data is None or instrument not in uplimit_data:
+        return None
+    
+    uplimit_hp = uplimit_data[instrument]
+    
+    # 3. 计算 uplimit
+    try:
+        uplimit = uplimit_hp * coef
+        return uplimit
+    except Exception as e:
+        print(f"calculate_uplimit error for {instrument}: {e}")
+        return None
+
 
 
 # ─────────────────────────────────────────────
@@ -662,7 +768,6 @@ def calculate_product(
 ) -> tuple[dict, pd.DataFrame | None, dict]:
     """
     返回 (summary_dict, detail_df, detail_status_dict)
-    detail_status_dict 用于标记展开器标题的颜色
     """
     
     warnings_list: list[str] = []
@@ -747,27 +852,17 @@ def calculate_product(
     future_df = shared_future_df
     margin_df = shared_margin_df
 
-    # ── 4. 加载 risk_position 和数据库参数 ────────────────────
+    # ── 4. 加载 risk_position、clip 和 uplimit 数据 ────────────
     risk_position_map = load_risk_position(market, product, data_date)
     
+    # 查询 clip
     db_product = cfg.get("db_product")
-    clip = get_product_clip(db_product) if db_product else 0
-    uplimit_coef = get_product_uplimit_coef(db_product) if db_product else 0
+    clip = get_product_clip(db_product) if db_product else None
     
-    # 读取 uplimit_holding_position
-    uplimit_data = {}
+    # ⭐ 新逻辑：加载 uplimit_holding_position（仅对商品期货）
+    uplimit_holding_position_data = None
     if market == "commodity":
-        uplimit_csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
-        uplimit_df, _ = safe_read_csv(uplimit_csv_path)
-        if uplimit_df is not None and not uplimit_df.empty:
-            if "instrument" in uplimit_df.columns and "uplimit_holding_position" in uplimit_df.columns:
-                try:
-                    for _, row in uplimit_df.iterrows():
-                        inst = str(row["instrument"]).strip()
-                        uplimit_hp = float(row.get("uplimit_holding_position", 0))
-                        uplimit_data[inst] = uplimit_hp
-                except Exception as e:
-                    print(f"uplimit_data parsing error: {e}")
+        uplimit_holding_position_data = load_uplimit_holding_position()
 
     # ── 5. Per-instrument calculations ───────────────────────
     market_value          = 0.0
@@ -858,13 +953,13 @@ def calculate_product(
             has_warning = True
             risk_pos = None
 
-        # uplimit
+        # ⭐ 新逻辑：计算 uplimit = uplimit_holding_position × coef
         uplimit_value = None
         try:
-            if inst in uplimit_data and uplimit_coef and uplimit_coef > 0:
-                uplimit_value = uplimit_data[inst] * uplimit_coef
+            if market == "commodity" and db_product:
+                uplimit_value = calculate_uplimit(inst, db_product, uplimit_holding_position_data)
         except Exception as e:
-            inst_warnings.append(f"uplimit error: {e}")
+            inst_warnings.append(f"uplimit calculation error: {e}")
             has_warning = True
 
         # ── 长仓行（需求1：分离 LONG/SHORT）─────────────────────
@@ -898,7 +993,7 @@ def calculate_product(
                     "risk_position":     risk_pos,
                     "risk_match":        risk_match,
                     "clip":              clip,
-                    "uplimit":           round(uplimit_value, 2) if uplimit_value else None,
+                    "uplimit":           round(uplimit_value, 2) if uplimit_value is not None else None,
                     "_warnings":         "; ".join(inst_warnings),
                 })
             except Exception as e:
@@ -959,14 +1054,13 @@ def calculate_product(
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
     
     # 需求5：标题着色规则
-    # - 如果有任何警告或 try-except 错误 → yellow
-    # - 如果有 risk_position 不一致 → red
     detail_status = {
         "has_warning": has_warning,
         "has_risk": has_risk,
     }
     
     return data, detail_df, detail_status
+
 
 
 # ─────────────────────────────────────────────
