@@ -79,7 +79,7 @@ def get_product_uplimit_coef(product_name: str):
     query = f"""
         SELECT coef
         FROM commodity_meta.product_uplimit_coef
-        WHERE product_name = '{product_name}'
+        WHERE product_name = 'all'
         LIMIT 1
     """
     
@@ -99,5 +99,5 @@ def get_product_uplimit_coef(product_name: str):
 if __name__ == "__main__":
 
     # product_asset = get_product_asset()
-    product_clip = get_product_clip("melt")
-    print("product_clip = ", product_clip)
+    uplimit_coef = get_productup("cncf_melt_gbt")
+    print("uplimit_coef = ", uplimit_coef)
