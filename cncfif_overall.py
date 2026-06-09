@@ -1412,7 +1412,7 @@ def dashboard():
                     elif has_warning:
                         title_color = "🟡"
                     else:
-                        title_color = "⚪"
+                        title_color = ""
                     
                     title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
@@ -1432,6 +1432,9 @@ def dashboard():
                         for col in int_cols:
                             if col in display_ddf.columns:
                                 display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
+
+                        if "uplimit" in display_ddf.columns:
+                            display_ddf["uplimit"] = pd.to_numeric(display_ddf["uplimit"], errors="coerce").fillna(0).round(2)
 
                         # 重新标记列名
                         col_mapping = {
