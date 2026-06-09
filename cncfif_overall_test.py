@@ -1000,73 +1000,70 @@ def calculate_product(
         elif risk_match == "yellow":
             has_warning = True
 
-        # ── 长仓行 ─────────────────────────────────────────────
-        if long_pos > 0 or (long_pos == 0 and short_pos == 0):
-            try:
-                cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
-                pp_long = float(long_rows["position_profit"].iloc[0]) if not long_rows.empty else 0.0
-                total_pnl_long = cp_long + pp_long
-                
-                inst_margin_long = price * long_pos * multiplier * margin_ratio
-                market_value += price * long_pos * multiplier
-                instrument_margin_max = max(inst_margin_long, instrument_margin_max)
-                
-                detail_rows.append({
-                    "instrument":        inst,
-                    "position":          int(long_pos),
-                    "risk_position":     risk_pos,
-                    "clip":              clip,
-                    "uplimit":           round(uplimit_value, 2) if uplimit_value is not None else None,
-                    "position_type":     "LONG",
-                    "close_profit":      round(cp_long, 2),
-                    "position_profit":   round(pp_long, 2),
-                    "total_pnl":         round(total_pnl_long, 2),
-                    "instrument_margin": round(inst_margin_long, 2),
-                    "exchange":          exchange,
-                    "last_trade_time":   last_trade_time,
-                    "risk_match":        risk_match,
-                    "_warnings":         "; ".join(inst_warnings),
-                })
-            except Exception as e:
-                inst_warnings.append(f"LONG row error: {e}")
-                has_warning = True
+    # ── 长仓行 ─────────────────────────────────────────────
+    if long_pos > 0 or (long_pos == 0 and short_pos == 0):
+        try:
+            cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
+            pp_long = float(long_rows["position_profit"].iloc[0]) if not long_rows.empty else 0.0
+            total_pnl_long = cp_long + pp_long
 
-        # ── 短仓行 ───────────────────────────────────────────
-        if short_pos > 0:
-            try:
-                cp_short = float(short_rows["close_profit"].iloc[0]) if not short_rows.empty else 0.0
-                pp_short = float(short_rows["position_profit"].iloc[0]) if not short_rows.empty else 0.0
-                total_pnl_short = cp_short + pp_short
-                
-                inst_margin_short = price * short_pos * multiplier * margin_ratio
-                market_value += price * short_pos * multiplier
-                
-                # 检查 risk_position 匹配（对于 SHORT，传负数）
-                # risk_match = _check_risk_position_match(-short_pos, risk_pos)
-                # if risk_match == "red":
-                #     has_risk = True
-                # elif risk_match == "yellow":
-                #     has_warning = True
-                
-                detail_rows.append({
-                    "instrument":        inst,
-                    "position":          -int(short_pos),
-                    "risk_position":     risk_pos,
-                    "clip":              clip,
-                    "uplimit":           None,
-                    "position_type":     "SHORT",
-                    "close_profit":      round(cp_short, 2),
-                    "position_profit":   round(pp_short, 2),
-                    "total_pnl":         round(total_pnl_short, 2),
-                    "instrument_margin": 0.0,
-                    "exchange":          exchange,
-                    "last_trade_time":   last_trade_time,
-                    "risk_match":        risk_match,
-                    "_warnings":         "; ".join(inst_warnings),
-                })
-            except Exception as e:
-                inst_warnings.append(f"SHORT row error: {e}")
-                has_warning = True
+            inst_margin_long = price * long_pos * multiplier * margin_ratio
+            inst_market_value_long = price * long_pos * multiplier  # ⭐ 新增：单合约市值
+            market_value += inst_market_value_long
+            instrument_margin_max = max(inst_margin_long, instrument_margin_max)
+
+            detail_rows.append({
+                "instrument":        inst,
+                "position":          int(long_pos),
+                "risk_position":     risk_pos,
+                "clip":              clip,
+                "uplimit":           round(uplimit_value, 2) if uplimit_value is not None else None,
+                "position_type":     "LONG",
+                "market_value":      round(inst_market_value_long, 2),  # ⭐ 新增
+                "close_profit":      round(cp_long, 2),
+                "position_profit":   round(pp_long, 2),
+                "total_pnl":         round(total_pnl_long, 2),
+                "instrument_margin": round(inst_margin_long, 2),
+                "exchange":          exchange,
+                "last_trade_time":   last_trade_time,
+                "risk_match":        risk_match,
+                "_warnings":         "; ".join(inst_warnings),
+            })
+        except Exception as e:
+            inst_warnings.append(f"LONG row error: {e}")
+            has_warning = True
+
+    # ── 短仓行 ───────────────────────────────────────────
+    if short_pos > 0:
+        try:
+            cp_short = float(short_rows["close_profit"].iloc[0]) if not short_rows.empty else 0.0
+            pp_short = float(short_rows["position_profit"].iloc[0]) if not short_rows.empty else 0.0
+            total_pnl_short = cp_short + pp_short
+
+            inst_margin_short = price * short_pos * multiplier * margin_ratio
+            inst_market_value_short = price * short_pos * multiplier  # ⭐ 新增：单合约市值（取绝对值）
+            market_value += inst_market_value_short
+
+            detail_rows.append({
+                "instrument":        inst,
+                "position":          -int(short_pos),
+                "risk_position":     risk_pos,
+                "clip":              clip,
+                "uplimit":           None,
+                "position_type":     "SHORT",
+                "market_value":      round(inst_market_value_short, 2),  # ⭐ 新增（SHORT 同样是正数市值）
+                "close_profit":      round(cp_short, 2),
+                "position_profit":   round(pp_short, 2),
+                "total_pnl":         round(total_pnl_short, 2),
+                "instrument_margin": 0.0,
+                "exchange":          exchange,
+                "last_trade_time":   last_trade_time,
+                "risk_match":        risk_match,
+                "_warnings":         "; ".join(inst_warnings),
+            })
+        except Exception as e:
+            inst_warnings.append(f"SHORT row error: {e}")
+            has_warning = True
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
@@ -1418,40 +1415,47 @@ def dashboard():
                     title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
                     with st.expander(title, expanded=False):
-                        # ⭐ 修改列顺序：instrument, position, risk_position, clip, uplimit, 其他...
+                        # ⭐ 在 instrument_margin 之前插入 market_value
                         display_cols = [
                             "instrument", "position", "risk_position", "clip", "uplimit",
                             "close_profit", "position_profit", "total_pnl",
+                            "market_value",        # ⭐ 新增
                             "instrument_margin", "exchange", "last_trade_time",
                         ]
                         display_ddf = ddf[
                             [c for c in display_cols if c in ddf.columns]
                         ].copy()
 
-                        # ⭐ 新增：格式化为整数（仅保留整数，无小数点）
-                        int_cols = ["risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
+                        # ⭐ market_value 也格式化为整数
+                        int_cols = [
+                            "risk_position", "close_profit", "position_profit",
+                            "total_pnl", "market_value", "instrument_margin",  # ⭐ 加入 market_value
+                        ]
                         for col in int_cols:
                             if col in display_ddf.columns:
-                                display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
+                                display_ddf[col] = pd.to_numeric(
+                                    display_ddf[col], errors="coerce"
+                                ).fillna(0).astype(int)
 
                         if "uplimit" in display_ddf.columns:
                             display_ddf["uplimit"] = display_ddf["uplimit"].apply(
                                 lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None
                             )
 
-                        # 重新标记列名
+                        # ⭐ 列名映射加入 market_value
                         col_mapping = {
-                            "instrument": "合约名称",
-                            "position": "持仓数量",
-                            "risk_position": "目标仓位",
-                            "clip": "Clip",
-                            "uplimit": "Uplimit",
-                            "close_profit": "平仓盈亏",
-                            "position_profit": "持仓盈亏",
-                            "total_pnl": "当日盈亏",
+                            "instrument":        "合约名称",
+                            "position":          "持仓数量",
+                            "risk_position":     "目标仓位",
+                            "clip":              "Clip",
+                            "uplimit":           "Uplimit",
+                            "close_profit":      "平仓盈亏",
+                            "position_profit":   "持仓盈亏",
+                            "total_pnl":         "当日盈亏",
+                            "market_value":      "合约市值",   # ⭐ 新增
                             "instrument_margin": "保证金",
-                            "exchange": "交易所",
-                            "last_trade_time": "最后成交时间",
+                            "exchange":          "交易所",
+                            "last_trade_time":   "最后成交时间",
                         }
                         display_ddf = display_ddf.rename(columns=col_mapping)
 
