@@ -97,10 +97,6 @@ PRODUCT_CONFIGS = [
 
 
 # ─────────────────────────────────────────────
-# CLICKHOUSE CLIENT
-# ─────────────────────────────────────────────
-
-# ─────────────────────────────────────────────
 # CLICKHOUSE CLIENT & 数据库查询函数
 # ─────────────────────────────────────────────
 
@@ -523,7 +519,7 @@ def get_price(instrument: str) -> float | None:
 
 
 # ─────────────────────────────────────────────
-# RISK POSITION LOADER (需求4)
+# RISK POSITION LOADER (修改版)
 # ─────────────────────────────────────────────
 
 def load_risk_position(market: str, product: str, data_date: int) -> dict[str, float] | None:
@@ -539,21 +535,20 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
         {instrument: risk_position_value} 字典，或 None
     """
     result = {}
-    strategy_mapping = {
-        "bgt_ax1h": "cncf_melt_bgt_dz_bohr",
-        "shjq": "cncf_melt_shjq_zx_bohr",
-        "shph1h": "cncf_melt_shph1h_zx_bohr",
-        "zz1h": "cncf_melt_zhizeng_dz_bohr",
-
-        "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
-        "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
-        "zz1h": "cnif_short_zz1h_dz_dashboard_bohr",
-    }
-    if product not in strategy_mapping:
-        # print(f"⚠️ load_risk_position: No strategy mapping for product '{product}'")
-        return None
+    
     if market == "commodity":
-        # cncf 的 8 个目录，用户可根据活跃策略修改路
+        # ⭐ COMMODITY 的 strategy_mapping
+        strategy_mapping = {
+            "bgt_ax1h": "cncf_melt_bgt_dz_bohr",
+            "shjq": "cncf_melt_shjq_zx_bohr",
+            "shph1h": "cncf_melt_shph1h_zx_bohr",
+            "zz1h": "cncf_melt_zhizeng_dz_bohr",
+        }
+        
+        if product not in strategy_mapping:
+            # print(f"⚠️ load_risk_position: No strategy mapping for product '{product}'")
+            return None
+        
         dir_name = strategy_mapping[product]
         csv_path = f"/cpfs/prod/prod_log/china_future/cncf/{dir_name}/{data_date}.csv"
         df, err = safe_read_csv(csv_path)
@@ -575,7 +570,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
                 continue
     
     elif market == "futures":
-        # cnif 的 3 个策略
+        # ⭐ FUTURES 的 strategy_mapping
         strategy_mapping = {
             "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
             "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
@@ -583,6 +578,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
         }
         
         if product not in strategy_mapping:
+            # print(f"⚠️ load_risk_position: No strategy mapping for product '{product}'")
             return None
         
         dir_name = strategy_mapping[product]
@@ -642,11 +638,12 @@ SUMMARY_COLS = [
     "market", "product", "broker",
     "init_capital",
     "balance", "pre_balance", "market_value",
-    "cost", "ret", "pnl",
+    "cost", "net_return", "fee", "pnl",
     "max_margin", "product_low_limit",
     "margin", "margin_ratio",
     "update_time", "time", "warnings", "deposit_withdraw", "is_market_open",
 ]
+
 
 DEFAULT_SUMMARY = {
     "market": "",
@@ -657,7 +654,8 @@ DEFAULT_SUMMARY = {
     "pre_balance": 0,
     "market_value": 0,
     "cost": 0,
-    "ret": 0,
+    "net_return": 0,
+    "fee": "0.000%",
     "pnl": "0.000%",
     "max_margin": 0.0,
     "product_low_limit": 0.0,
@@ -668,6 +666,8 @@ DEFAULT_SUMMARY = {
     "warnings": "",
     "is_market_open": False,
 }
+
+
 
 
 def _get_last_trade_time_adjusted(
@@ -855,17 +855,25 @@ def calculate_product(
         ])
 
     try:
-        data["ret"] = float(
+        abs_return = float(
             (pd_df.get("position_profit", pd.Series([0])).fillna(0)
              + pd_df.get("close_profit",  pd.Series([0])).fillna(0)).sum()
         )
     except Exception as e:
         warnings_list.append(f"PnL calculation error: {e}")
-        data["ret"] = 0.0
+        abs_return = 0.0
 
-    # ── 3. PnL ───────────────────────────────────────────────
+    # ── 3. 计算 net_return 和 fee ─────────────────────────────
+    data["net_return"] = abs_return - fee
     if init_capital > 0:
-        pnl = round((data["ret"] - fee) / init_capital * 100, 3)
+        fee_pct = (fee / init_capital) * 100
+        data["fee"] = f"{fee_pct:.3f}%"
+    else:
+        data["fee"] = "0.000%"
+
+    # ── 4. PnL ───────────────────────────────────────────────
+    if init_capital > 0:
+        pnl = round((data["net_return"]) / init_capital * 100, 3)
     else:
         pnl = 0.0
     data["pnl"] = f"{pnl:.3f}%"
@@ -874,7 +882,7 @@ def calculate_product(
     future_df = shared_future_df
     margin_df = shared_margin_df
 
-    # ── 4. 加载 risk_position、clip 和 uplimit 数据 ────────────
+    # ── 5. 加载 risk_position、clip 和 uplimit 数据 ────────────
     risk_position_map = load_risk_position(market, product, data_date)
     
     # 查询 clip
@@ -886,7 +894,7 @@ def calculate_product(
     if market == "commodity":
         uplimit_holding_position_data = load_uplimit_holding_position()
 
-    # ── 5. Per-instrument calculations ───────────────────────
+    # ── 6. Per-instrument calculations ───────────────────────
     market_value          = 0.0
     instrument_margin_max = 0.0
     detail_rows: list[dict] = []
@@ -984,7 +992,7 @@ def calculate_product(
             inst_warnings.append(f"uplimit calculation error: {e}")
             has_warning = True
 
-        # ── 长仓行（需求1：分离 LONG/SHORT）─────────────────────
+        # ── 长仓行 ─────────────────────────────────────────────
         if long_pos > 0 or (long_pos == 0 and short_pos == 0):
             try:
                 cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
@@ -1005,6 +1013,9 @@ def calculate_product(
                 detail_rows.append({
                     "instrument":        inst,
                     "position":          int(long_pos),
+                    "risk_position":     risk_pos,
+                    "clip":              clip,
+                    "uplimit":           round(uplimit_value, 2) if uplimit_value is not None else None,
                     "position_type":     "LONG",
                     "close_profit":      round(cp_long, 2),
                     "position_profit":   round(pp_long, 2),
@@ -1012,10 +1023,7 @@ def calculate_product(
                     "instrument_margin": round(inst_margin_long, 2),
                     "exchange":          exchange,
                     "last_trade_time":   last_trade_time,
-                    "risk_position":     risk_pos,
                     "risk_match":        risk_match,
-                    "clip":              clip,
-                    "uplimit":           round(uplimit_value, 2) if uplimit_value is not None else None,
                     "_warnings":         "; ".join(inst_warnings),
                 })
             except Exception as e:
@@ -1042,17 +1050,17 @@ def calculate_product(
                 detail_rows.append({
                     "instrument":        inst,
                     "position":          -int(short_pos),
+                    "risk_position":     risk_pos,
+                    "clip":              clip,
+                    "uplimit":           None,
                     "position_type":     "SHORT",
                     "close_profit":      round(cp_short, 2),
                     "position_profit":   round(pp_short, 2),
                     "total_pnl":         round(total_pnl_short, 2),
-                    "instrument_margin": 0.0,  # 保证金已在 LONG 行显示
+                    "instrument_margin": 0.0,
                     "exchange":          exchange,
                     "last_trade_time":   last_trade_time,
-                    "risk_position":     risk_pos,
                     "risk_match":        risk_match,
-                    "clip":              clip,
-                    "uplimit":           None,  # 保证金已在 LONG 行
                     "_warnings":         "; ".join(inst_warnings),
                 })
             except Exception as e:
@@ -1120,7 +1128,7 @@ def load_shared_files(
 
 
 # ─────────────────────────────────────────────
-# OVERVIEW TOOLTIP (需求7)
+# OVERVIEW TOOLTIP (更新版)
 # ─────────────────────────────────────────────
 
 def display_overview_with_tooltips(styled_df):
@@ -1135,15 +1143,17 @@ def display_overview_with_tooltips(styled_df):
         field_data = {
             "字段名": [
                 "market", "product", "broker", "init_capital",
-                "balance", "pre_balance", "market_value", "cost",
-                "ret", "pnl", "max_margin", "product_low_limit",
+                "balance", "pre_balance", "market_value",
+                "cost", "ret", "net_return", "fee",
+                "pnl", "max_margin", "product_low_limit",
                 "margin", "margin_ratio", "update_time", "time",
                 "deposit_withdraw", "warnings",
             ],
             "分类": [
                 "市场", "市场", "市场", "资金",
-                "资金", "资金", "持仓", "资金",
-                "资金", "资金", "风险", "风险",
+                "资金", "资金", "持仓",
+                "资金", "资金", "资金", "资金",
+                "资金", "风险", "风险",
                 "风险", "风险", "时间", "时间",
                 "资金", "系统",
             ],
@@ -1157,7 +1167,9 @@ def display_overview_with_tooltips(styled_df):
                 "当前持仓市值 = sum(合约数量 × 市场价格 × 合约乘数)",
                 "累计手续费，交易费用总和",
                 "总回报/盈亏 = 平仓盈亏 + 持仓盈亏",
-                "收益率 = (ret - cost) / init_capital × 100%",
+                "净收益 = ret - cost (总回报 - 手续费)",
+                "手续费占比 = cost / init_capital × 100%",
+                "收益率 = net_return / init_capital × 100%",
                 "最大单合约保证金占比 = max(单合约保证金) / 余额，警告阈值 > 25%",
                 "持仓市值占比 = 持仓市值 / 账户余额，警告阈值 < 0.8",
                 "当前占用保证金 = sum(持仓数量 × 价格 × 乘数 × 保证金率)",
@@ -1181,14 +1193,14 @@ def display_overview_with_tooltips(styled_df):
 
 
 # ─────────────────────────────────────────────
-# BUILD SUMMARY TABLE
+# BUILD SUMMARY TABLE (更新版)
 # ─────────────────────────────────────────────
 
 def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     summary_rows = []
 
     df_numeric = df.copy()
-    for col in ["balance", "pre_balance", "init_capital", "cost", "ret", "market_value"]:
+    for col in ["balance", "pre_balance", "init_capital", "cost", "net_return", "market_value"]:
         if col in df_numeric.columns:
             df_numeric[col] = pd.to_numeric(
                 df_numeric[col].astype(str).str.replace(",", ""),
@@ -1196,17 +1208,15 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             ).fillna(0)
 
     def _build_row(label: str, subset: pd.DataFrame) -> dict:
-        aum        = subset["init_capital"].sum()
-        cost       = subset["cost"].sum()
-        ret        = subset["ret"].sum()
-        total_pnl  = ret - cost
-        pnl_pct    = (total_pnl / aum * 100) if aum > 0 else 0.0
+        aum         = subset["init_capital"].sum()
+        cost        = subset["cost"].sum()
+        net_return  = subset["net_return"].sum()
+        pnl_pct     = (net_return / aum * 100) if aum > 0 else 0.0
         return {
             "summary":    label,
             "aum":        int(aum),
             "cost":       int(cost),
-            "ret":        int(ret),
-            "total_pnl":  int(total_pnl),
+            "net_return": int(net_return),
             "pnl":        f"{pnl_pct:.3f}%",
         }
 
@@ -1220,7 +1230,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     summary_rows.append(_build_row("cn_all", df_numeric))
 
     summary_df = pd.DataFrame(summary_rows)
-    for col in ["aum", "cost", "ret", "total_pnl"]:
+    for col in ["aum", "net_return"]:
         summary_df[col] = summary_df[col].apply(lambda x: f"{x:,}")
 
     return summary_df
@@ -1330,8 +1340,10 @@ def dashboard():
 
             money_cols = [
                 "balance", "pre_balance", "market_value",
-                "deposit_withdraw", "cost", "ret", "init_capital", "margin"
+                "deposit_withdraw", "cost", "net_return", "init_capital", "margin"
             ]
+
+
             for col in money_cols:
                 df[col] = (
                     pd.to_numeric(df[col], errors="coerce")
@@ -1370,7 +1382,6 @@ def dashboard():
                 st.markdown("---")
                 st.subheader("📊 Trading Summary")
                 summary_table = build_summary_table(df)
-                # st.dataframe(summary_table, use_container_width=True)
                 st.dataframe(summary_table, width="stretch")
 
                 if global_file_errors:
@@ -1401,67 +1412,76 @@ def dashboard():
                     elif has_warning:
                         title_color = "🟡"
                     else:
-                        title_color = "🟢"
+                        title_color = ""
                     
                     title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
                     with st.expander(title, expanded=False):
+                        # ⭐ 修改列顺序：instrument, position, risk_position, clip, uplimit, 其他...
                         display_cols = [
-                            "instrument", "position", "position_type",
+                            "instrument", "position", "risk_position", "clip", "uplimit",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin", "exchange", "last_trade_time",
-                            "risk_position", "clip", "uplimit",
                         ]
                         display_ddf = ddf[
                             [c for c in display_cols if c in ddf.columns]
                         ].copy()
 
+                        # ⭐ 新增：格式化为整数（仅保留整数，无小数点）
+                        int_cols = ["risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
+                        for col in int_cols:
+                            if col in display_ddf.columns:
+                                display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
+
+                        if "uplimit" in display_ddf.columns:
+                            display_ddf["uplimit"] = display_ddf["uplimit"].apply(
+                                lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None
+                            )
+
                         # 重新标记列名
                         col_mapping = {
                             "instrument": "合约名称",
                             "position": "持仓数量",
-                            "position_type": "方向",
+                            "risk_position": "目标仓位",
+                            "clip": "Clip",
+                            "uplimit": "Uplimit",
                             "close_profit": "平仓盈亏",
                             "position_profit": "持仓盈亏",
                             "total_pnl": "当日盈亏",
                             "instrument_margin": "保证金",
                             "exchange": "交易所",
                             "last_trade_time": "最后成交时间",
-                            "risk_position": "目标仓位",
-                            "clip": "Clip",
-                            "uplimit": "Uplimit",
                         }
                         display_ddf = display_ddf.rename(columns=col_mapping)
 
-                        # 需求4：对风险仓位列进行着色
-                        def style_risk_position_row(row_idx):
+                        # ⭐ 需求2：红色整行着色（对 risk_match == "red" 的行）
+                        def style_risk_match_row(row_idx):
+                            """对 risk_match == "red" 的整行着色"""
                             styles = [""] * len(display_ddf.columns)
-                            if "目标仓位" not in display_ddf.columns:
-                                return styles
                             
-                            if "risk_match" in ddf.columns:
+                            if row_idx < len(ddf) and "risk_match" in ddf.columns:
                                 risk_match = ddf.iloc[row_idx].get("risk_match", "matched")
-                                col_idx = display_ddf.columns.get_loc("目标仓位")
                                 
                                 if risk_match == "red":
-                                    styles[col_idx] = "background-color: #ff4b4b; color: white; font-weight: bold;"
-                                elif risk_match == "yellow":
-                                    styles[col_idx] = "background-color: #ffd700; color: black; font-weight: bold;"
+                                    # 整行红色着色
+                                    styles = ["background-color: #ff4b4b; color: white; font-weight: bold;"] * len(display_ddf.columns)
                             
                             return styles
 
-                        # 应用行样式
-                        def apply_row_styles(df_styled):
-                            for row_idx in range(len(ddf)):
-                                styles = style_risk_position_row(row_idx)
-                                df_styled = df_styled.applymap(
-                                    lambda x: styles[list(display_ddf.columns).index(str(x))] 
-                                    if str(x) in display_ddf.columns else ""
-                                )
-                            return df_styled
+                        # 使用 Styler 应用行着色
+                        styled_detail = display_ddf.style
+                        for row_idx in range(len(display_ddf)):
+                            row_styles = style_risk_match_row(row_idx)
+                            if any(row_styles):
+                                # 对这一行应用样式
+                                for col_idx, (col_name, style) in enumerate(zip(display_ddf.columns, row_styles)):
+                                    if style:
+                                        styled_detail = styled_detail.applymap(
+                                            lambda x, s=style: s,
+                                            subset=pd.IndexSlice[[row_idx], col_name]
+                                        )
 
-                        # st.dataframe(display_ddf, use_container_width=True)
-                        st.dataframe(display_ddf, width="stretch")
+                        st.dataframe(styled_detail, width="stretch")
 
                         # 显示警告信息
                         if "_warnings" in ddf.columns:
