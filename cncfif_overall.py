@@ -94,16 +94,6 @@ PRODUCT_CONFIGS = [
         "db_product":   None,
     },
 ]
-# ─────────────────────────────────────────────
-# PRODUCT TO DB_PRODUCT MAPPING
-# ─────────────────────────────────────────────
-
-PRODUCT_TO_DB_PRODUCT = {
-    "zz1h":       "commodity_melt",
-    "bgt_ax1h":   "commodity_melt_bgt",
-    "shjq":       "cncf_melt_shjq_zx",
-    "shph1h":     "commodity_melt_shph_zx",
-}
 
 
 # ─────────────────────────────────────────────
@@ -164,15 +154,12 @@ def get_product_clip(product_name: str) -> int | None:
         # print(f"get_product_clip Query failed: {e}")
         return None
 
+
 def get_product_uplimit_coef(product_name: str) -> float | None:
     """
     根据 product_name 查询 coef（uplimit系数）
-    
-    Args:
-        product_name: 产品名，如 'commodity_melt', 'commodity_melt_bgt', 'cncf_melt_shjq_zx', 'commodity_melt_shph_zx'
-    
-    Returns:
-        coef 数值（double），如果不存在返回 None
+    :param product_name: 产品名，如 'melt'
+    :return: coef 数值（double），如果不存在返回 None
     """
     if not product_name:
         return None
@@ -181,11 +168,10 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
     if client is None:
         return None
     
-    # ⭐ 修复：使用传入的 product_name 参数，而不是硬编码的 'all'
     query = f"""
         SELECT coef
         FROM commodity_meta.product_uplimit_coef
-        WHERE product_name = '{product_name}'
+        WHERE product_name = 'all'
         LIMIT 1
     """
     
@@ -194,14 +180,12 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
 
         if not result.empty:
             coef = float(result.iloc[0]["coef"])
-            # print(f"✅ get_product_uplimit_coef: product_name='{product_name}', coef={coef}")
             return coef
         else:
-            # print(f"⚠️ get_product_uplimit_coef: No record found for product_name='{product_name}'")
             return None
 
     except Exception as e:
-        # print(f"❌ get_product_uplimit_coef Query failed for '{product_name}': {e}")
+        # print(f"get_product_uplimit_coef Query failed: {e}")
         return None
 
 
@@ -209,26 +193,15 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
 # 修复：从CSV读取 uplimit_holding_position
 # ─────────────────────────────────────────────
 
-def load_uplimit_holding_position(product: str, data_date: int) -> dict[str, float] | None:
+def load_uplimit_holding_position() -> dict[str, float] | None:
     """
     从CSV文件读取 uplimit_holding_position
+    文件路径: /cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv
     
-    根据产品名称和日期动态获取文件路径，并读取 up_limit_holding_position 列
-    
-    Args:
-        product: 产品代码（"zz1h", "bgt_ax1h", "shjq", "shph1h"）
-        data_date: YYYYMMDD 格式的日期
-    
-    Returns:
-        {instrument: uplimit_holding_position} 的字典，或 None
+    :return: {instrument: uplimit_holding_position} 的字典
     """
-    
-    # ⭐ 新增：根据产品和日期获取文件路径
-    csv_path = get_uplimit_holding_position_path(product, data_date)
-    
-    if not csv_path:
-        # print(f"⚠️ load_uplimit_holding_position: No path mapping for product '{product}'")
-        return None
+    # ⭐ 修复：统一使用这个路径
+    csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     
     uplimit_data = {}
     
@@ -239,14 +212,14 @@ def load_uplimit_holding_position(product: str, data_date: int) -> dict[str, flo
             # print(f"❌ load_uplimit_holding_position: {err}")
             return None
         
-        # print(f"✅ load_uplimit_holding_position: CSV loaded, path={csv_path}, shape={df.shape}")
+        # print(f"✅ load_uplimit_holding_position: CSV loaded, shape={df.shape}, columns={list(df.columns)}")
         
-        # 必须有 instrument 和 up_limit_holding_position 两列
+        # 必须有 instrument 和 uplimit_holding_position 两列
         if "instrument" not in df.columns or "up_limit_holding_position" not in df.columns:
             # print(f"❌ Missing required columns. Available: {list(df.columns)}")
             return None
         
-        # 逐行读取 - 允许 0 值和非零值
+        # 逐行读取 - ⭐ 修复：不过滤 uplimit_hp，包括 0 值
         loaded_count = 0
         for idx, row in df.iterrows():
             try:
@@ -266,7 +239,7 @@ def load_uplimit_holding_position(product: str, data_date: int) -> dict[str, flo
                 # print(f"⚠️ Parse error for row {idx}: {e}")
                 continue
         
-        # print(f"✅ Loaded {loaded_count} instruments from uplimit CSV (product={product}, date={data_date})")
+        # print(f"✅ Loaded {loaded_count} instruments from uplimit CSV")
         return uplimit_data if uplimit_data else None
     
     except Exception as e:
@@ -475,31 +448,6 @@ def get_margin_file_path(path: str, market: str, data_date: int) -> str:
             f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv",
     }
     return mapping.get(path, "")
-
-# ─────────────────────────────────────────────
-# 获取 uplimit_holding_position 文件路径
-# ─────────────────────────────────────────────
-
-def get_uplimit_holding_position_path(product: str, data_date: int) -> str:
-    """
-    根据产品名称和日期获取 uplimit_holding_position CSV 文件路径
-    
-    Args:
-        product: 产品代码（"zz1h", "bgt_ax1h", "shjq", "shph1h"）
-        data_date: YYYYMMDD 格式的日期
-    
-    Returns:
-        CSV 文件路径
-    """
-    # ⭐ 产品名称到文件路径的映射
-    path_mapping = {
-        "zz1h": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
-        "bgt_ax1h": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
-        "shjq": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
-        "shph1h": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shph1h_zx_{data_date}.csv",  # ⭐ 注意：这个路径目录不同
-    }
-    
-    return path_mapping.get(product, "")
 
 
 def get_static_info_path(market: str) -> str:
@@ -945,22 +893,10 @@ def calculate_product(
     db_product = cfg.get("db_product")
     clip = get_product_clip(db_product) if db_product else None
     
-    # ⭐ 验证：打印当前产品的 db_product 值
-    # print(f"[DEBUG] product={product}, db_product={db_product}")
-    
     # ⭐ 新逻辑：加载 uplimit_holding_position（仅对商品期货）
     uplimit_holding_position_data = None
     if market == "commodity":
-        uplimit_holding_position_data = load_uplimit_holding_position(product, data_date)
-
-    # 查询 clip
-    db_product = cfg.get("db_product")
-    clip = get_product_clip(db_product) if db_product else None
-    
-    # ⭐ 新逻辑：加载 uplimit_holding_position（仅对商品期货）
-    uplimit_holding_position_data = None
-    if market == "commodity":
-        uplimit_holding_position_data = load_uplimit_holding_position(product, data_date)
+        uplimit_holding_position_data = load_uplimit_holding_position()
 
     # ── 6. Per-instrument calculations ───────────────────────
     market_value          = 0.0

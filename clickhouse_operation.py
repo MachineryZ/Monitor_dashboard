@@ -99,5 +99,5 @@ def get_product_uplimit_coef(product_name: str):
 if __name__ == "__main__":
 
     # product_asset = get_product_asset()
-    uplimit_coef = get_productup("cncf_melt_gbt")
+    uplimit_coef = get_product_uplimit_coef("cncf_melt_gbt")
     print("uplimit_coef = ", uplimit_coef)
