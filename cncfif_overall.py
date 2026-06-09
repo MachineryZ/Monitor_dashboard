@@ -1008,11 +1008,13 @@ def calculate_product(
                 total_pnl_long = cp_long + pp_long
                 
                 inst_margin_long = price * long_pos * multiplier * margin_ratio
-                market_value += price * long_pos * multiplier
+                inst_market_value_long = price * long_pos * multiplier  # ⭐ 新增
+                market_value += inst_market_value_long
                 instrument_margin_max = max(inst_margin_long, instrument_margin_max)
                 
                 detail_rows.append({
                     "instrument":        inst,
+                    "market_value":      round(inst_market_value_long, 2),  # ⭐ 新增
                     "position":          int(long_pos),
                     "risk_position":     risk_pos,
                     "clip":              clip,
@@ -1031,6 +1033,7 @@ def calculate_product(
                 inst_warnings.append(f"LONG row error: {e}")
                 has_warning = True
 
+
         # ── 短仓行 ───────────────────────────────────────────
         if short_pos > 0:
             try:
@@ -1039,17 +1042,12 @@ def calculate_product(
                 total_pnl_short = cp_short + pp_short
                 
                 inst_margin_short = price * short_pos * multiplier * margin_ratio
-                market_value += price * short_pos * multiplier
-                
-                # 检查 risk_position 匹配（对于 SHORT，传负数）
-                # risk_match = _check_risk_position_match(-short_pos, risk_pos)
-                # if risk_match == "red":
-                #     has_risk = True
-                # elif risk_match == "yellow":
-                #     has_warning = True
+                inst_market_value_short = price * short_pos * multiplier  # ⭐ 新增
+                market_value += inst_market_value_short
                 
                 detail_rows.append({
                     "instrument":        inst,
+                    "market_value":      round(inst_market_value_short, 2),  # ⭐ 新增
                     "position":          -int(short_pos),
                     "risk_position":     risk_pos,
                     "clip":              clip,
@@ -1067,6 +1065,7 @@ def calculate_product(
             except Exception as e:
                 inst_warnings.append(f"SHORT row error: {e}")
                 has_warning = True
+
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
@@ -1420,16 +1419,18 @@ def dashboard():
                     with st.expander(title, expanded=False):
                         # ⭐ 修改列顺序：instrument, position, risk_position, clip, uplimit, 其他...
                         display_cols = [
-                            "instrument", "position", "risk_position", "clip", "uplimit",
+                            "instrument", "market_value",  # ⭐ market_value 插入此处
+                            "position", "risk_position", "clip", "uplimit",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin", "exchange", "last_trade_time",
                         ]
+
                         display_ddf = ddf[
                             [c for c in display_cols if c in ddf.columns]
                         ].copy()
 
                         # ⭐ 新增：格式化为整数（仅保留整数，无小数点）
-                        int_cols = ["risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
+                        int_cols = ["market_value", "risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
                         for col in int_cols:
                             if col in display_ddf.columns:
                                 display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
@@ -1441,18 +1442,20 @@ def dashboard():
 
                         # 重新标记列名
                         col_mapping = {
-                            "instrument": "合约名称",
-                            "position": "持仓数量",
-                            "risk_position": "目标仓位",
-                            "clip": "Clip",
-                            "uplimit": "Uplimit",
-                            "close_profit": "平仓盈亏",
-                            "position_profit": "持仓盈亏",
-                            "total_pnl": "当日盈亏",
+                            "instrument":        "合约名称",
+                            "market_value":      "合约市值",   # ⭐ 新增
+                            "position":          "持仓数量",
+                            "risk_position":     "目标仓位",
+                            "clip":              "Clip",
+                            "uplimit":           "Uplimit",
+                            "close_profit":      "平仓盈亏",
+                            "position_profit":   "持仓盈亏",
+                            "total_pnl":         "当日盈亏",
                             "instrument_margin": "保证金",
-                            "exchange": "交易所",
-                            "last_trade_time": "最后成交时间",
+                            "exchange":          "交易所",
+                            "last_trade_time":   "最后成交时间",
                         }
+
                         display_ddf = display_ddf.rename(columns=col_mapping)
 
                         # ⭐ 需求2：红色整行着色（对 risk_match == "red" 的行）
