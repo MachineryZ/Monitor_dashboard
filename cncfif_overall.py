@@ -748,31 +748,35 @@ def _check_risk_position_match(
     risk_pos: float | None,
 ) -> str:
     """
-    检查实际仓位和目标仓位是否匹配
+    检查实际仓位和目标仓位是否匹配（基于净仓位）
     
-    返回: "matched", "yellow", "red"
-    
-    规则（需求4）:
-    - 实际仓位有，目标仓位没有 → yellow
-    - 实际仓位没有，目标仓位有 → yellow
-    - 两者都有，但不相等 → red
-    - 其他 → matched
+    规则:
+    - 实际有仓位，目标没有 → yellow (警告)
+    - 实际没有仓位，目标有 → yellow (警告)
+    - 两者都有，但数值不相等 → red (错误)
+    - 都为0 或 相等 → matched (正常)
     """
+    # 转为整数比较（因为持仓数量必须是整数）
+    actual_int = int(round(actual_pos)) if actual_pos is not None else 0
+    
     if risk_pos is None:
-        # 目标仓位无数据
-        if actual_pos != 0:
-            return "yellow"  # 实际有，目标没有
-        return "matched"
+        risk_int = 0
+    else:
+        risk_int = int(round(risk_pos))
     
-    if actual_pos == 0 and risk_pos != 0:
-        return "yellow"  # 实际没有，目标有
+    # 规则1：实际有持仓，但目标仓位为0或无
+    if actual_int != 0 and risk_int == 0:
+        return "yellow"
     
-    if actual_pos != 0 and risk_pos == 0:
-        return "yellow"  # 实际有，目标没有
+    # 规则2：实际没有持仓，但目标仓位有值
+    if actual_int == 0 and risk_int != 0:
+        return "yellow"
     
-    if abs(actual_pos - risk_pos) > 1e-6:
-        return "red"  # 两者都有但不相等
+    # 规则3：两者都有持仓，但数值不相等
+    if actual_int != 0 and risk_int != 0 and actual_int != risk_int:
+        return "red"
     
+    # 其他情况（都为0，或两者相等）
     return "matched"
 
 
@@ -918,15 +922,12 @@ def calculate_product(
         try:
             long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
             short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
-            long_pos   = float(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
-            short_pos  = float(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
+            long_pos   = int(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
+            short_pos  = int(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
         except Exception as e:
             inst_warnings.append(f"position parsing error: {e}")
-            long_pos = short_pos = 0.0
+            long_pos = short_pos = 0
             has_warning = True
-
-        net_pos = long_pos - short_pos
-        margin_pos = max(long_pos, short_pos)
 
         # 获取静态信息
         multiplier = 1.0
@@ -975,14 +976,6 @@ def calculate_product(
             has_warning = True
             last_trade_time = ""
 
-        # risk_position
-        try:
-            risk_pos = risk_position_map.get(inst) if risk_position_map else None
-        except Exception as e:
-            inst_warnings.append(f"risk_position error: {e}")
-            has_warning = True
-            risk_pos = None
-
         # ⭐ 新逻辑：计算 uplimit = uplimit_holding_position × coef
         uplimit_value = None
         try:
@@ -990,6 +983,21 @@ def calculate_product(
                 uplimit_value = calculate_uplimit(inst, db_product, uplimit_holding_position_data)
         except Exception as e:
             inst_warnings.append(f"uplimit calculation error: {e}")
+            has_warning = True
+
+        net_pos = long_pos - short_pos
+        try:
+            risk_pos = risk_position_map.get(inst) if risk_position_map else None
+        except Exception as e:
+            inst_warnings.append(f"risk_position error: {e}")
+            has_warning = True
+            risk_pos = None
+        
+        # ⭐ 一次性检查，结果会被 LONG 行和 SHORT 行共用
+        risk_match = _check_risk_position_match(net_pos, risk_pos)
+        if risk_match == "red":
+            has_risk = True
+        elif risk_match == "yellow":
             has_warning = True
 
         # ── 长仓行 ─────────────────────────────────────────────
@@ -1002,13 +1010,6 @@ def calculate_product(
                 inst_margin_long = price * long_pos * multiplier * margin_ratio
                 market_value += price * long_pos * multiplier
                 instrument_margin_max = max(inst_margin_long, instrument_margin_max)
-                
-                # 检查 risk_position 匹配
-                risk_match = _check_risk_position_match(long_pos, risk_pos)
-                if risk_match == "red":
-                    has_risk = True
-                elif risk_match == "yellow":
-                    has_warning = True
                 
                 detail_rows.append({
                     "instrument":        inst,
@@ -1041,11 +1042,11 @@ def calculate_product(
                 market_value += price * short_pos * multiplier
                 
                 # 检查 risk_position 匹配（对于 SHORT，传负数）
-                risk_match = _check_risk_position_match(-short_pos, risk_pos)
-                if risk_match == "red":
-                    has_risk = True
-                elif risk_match == "yellow":
-                    has_warning = True
+                # risk_match = _check_risk_position_match(-short_pos, risk_pos)
+                # if risk_match == "red":
+                #     has_risk = True
+                # elif risk_match == "yellow":
+                #     has_warning = True
                 
                 detail_rows.append({
                     "instrument":        inst,
