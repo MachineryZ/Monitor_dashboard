@@ -1434,7 +1434,9 @@ def dashboard():
                                 display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
 
                         if "uplimit" in display_ddf.columns:
-                            display_ddf["uplimit"] = pd.to_numeric(display_ddf["uplimit"], errors="coerce").fillna(0).round(2)
+                            display_ddf["uplimit"] = display_ddf["uplimit"].apply(
+                                lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None
+                            )
 
                         # 重新标记列名
                         col_mapping = {
