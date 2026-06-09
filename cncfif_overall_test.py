@@ -993,6 +993,7 @@ def calculate_product(
             has_warning = True
 
         # ── 长仓行 ─────────────────────────────────────────────
+        actual_total = long_pos + short_pos
         if long_pos > 0 or (long_pos == 0 and short_pos == 0):
             try:
                 cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
@@ -1004,7 +1005,7 @@ def calculate_product(
                 instrument_margin_max = max(inst_margin_long, instrument_margin_max)
                 
                 # 检查 risk_position 匹配
-                risk_match = _check_risk_position_match(long_pos, risk_pos)
+                risk_match = _check_risk_position_match(actual_total, risk_pos)
                 if risk_match == "red":
                     has_risk = True
                 elif risk_match == "yellow":
@@ -1041,7 +1042,7 @@ def calculate_product(
                 market_value += price * short_pos * multiplier
                 
                 # 检查 risk_position 匹配（对于 SHORT，传负数）
-                risk_match = _check_risk_position_match(-short_pos, risk_pos)
+                risk_match = _check_risk_position_match(actual_total, risk_pos)
                 if risk_match == "red":
                     has_risk = True
                 elif risk_match == "yellow":
