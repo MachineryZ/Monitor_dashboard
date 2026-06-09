@@ -1429,8 +1429,15 @@ def dashboard():
                             [c for c in display_cols if c in ddf.columns]
                         ].copy()
 
-                        # ⭐ 新增：格式化为整数（仅保留整数，无小数点）
-                        int_cols = ["market_value", "risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
+                        if "market_value" in display_ddf.columns:
+                            display_ddf["market_value"] = (
+                                pd.to_numeric(display_ddf["market_value"], errors="coerce")
+                                .fillna(0)
+                                .astype(int)
+                                .apply(lambda x: f"{x:,}")
+                            )
+
+                        int_cols = ["risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
                         for col in int_cols:
                             if col in display_ddf.columns:
                                 display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
