@@ -539,39 +539,40 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
         {instrument: risk_position_value} 字典，或 None
     """
     result = {}
-    
+    strategy_mapping = {
+        "bgt_ax1h": "cncf_melt_bgt_dz_bohr",
+        "shjq": "cncf_melt_shjq_zx_bohr",
+        "shph1h": "cncf_melt_shph1h_zx_bohr",
+        "zz1h": "cncf_melt_zhizeng_dz_bohr",
+
+        "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
+        "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
+        "zz1h": "cnif_short_zz1h_dz_dashboard_bohr",
+    }
+    if product not in strategy_mapping:
+        # print(f"⚠️ load_risk_position: No strategy mapping for product '{product}'")
+        return None
     if market == "commodity":
-        # cncf 的 8 个目录，用户可根据活跃策略修改路径
-        cncf_dirs = [
-            "cncf_melt_bgt_dz_bohr",
-            "cncf_melt_bgt_dz_galileo",
-            "cncf_melt_shjq_zx_bohr",
-            "cncf_melt_shjq_zx_galileo",
-            "cncf_melt_shph1h_zx_bohr",
-            "cncf_melt_shph1h_zx_galileo",
-            "cncf_melt_zhizeng_dz_bohr",
-            "cncf_melt_zhizeng_dz_galileo",
-        ]
-        
-        for dir_name in cncf_dirs:
-            csv_path = f"/cpfs/prod/prod_log/china_future/cncf/{dir_name}/{data_date}.csv"
-            df, err = safe_read_csv(csv_path)
-            if err or df is None or df.empty:
-                continue
+        # cncf 的 8 个目录，用户可根据活跃策略修改路
+        dir_name = strategy_mapping[product]
+        csv_path = f"/cpfs/prod/prod_log/china_future/cncf/{dir_name}/{data_date}.csv"
+        df, err = safe_read_csv(csv_path)
+        if err or df is None or df.empty:
+            return None
             
-            for _, row in df.iterrows():
-                try:
-                    inst = str(row.get("instrument", "")).strip()
-                    all_stats_str = str(row.get("all_stats", "")).strip()
-                    
-                    # 解析 "[0.123]" → 0.123
-                    all_stats_str = all_stats_str.strip("[]").strip()
-                    if all_stats_str:
-                        value = float(all_stats_str)
-                        if inst:
-                            result[inst] = value
-                except (ValueError, TypeError, AttributeError):
-                    continue
+        for _, row in df.iterrows():
+            try:
+                inst = str(row.get("instrument", "")).strip()
+                all_stats_str = str(row.get("all_stats", "")).strip()
+                
+                # 解析 "[0.123]" → 0.123
+                all_stats_str = all_stats_str.strip("[]").strip()
+                if all_stats_str:
+                    value = float(all_stats_str)
+                    if inst:
+                        result[inst] = value
+            except (ValueError, TypeError, AttributeError):
+                continue
     
     elif market == "futures":
         # cnif 的 3 个策略
