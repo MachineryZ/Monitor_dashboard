@@ -1427,6 +1427,12 @@ def dashboard():
                             [c for c in display_cols if c in ddf.columns]
                         ].copy()
 
+                        # ⭐ 新增：格式化为整数（仅保留整数，无小数点）
+                        int_cols = ["risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
+                        for col in int_cols:
+                            if col in display_ddf.columns:
+                                display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
+
                         # 重新标记列名
                         col_mapping = {
                             "instrument": "合约名称",
@@ -1456,18 +1462,6 @@ def dashboard():
                                     styles = ["background-color: #ff4b4b; color: white; font-weight: bold;"] * len(display_ddf.columns)
                             
                             return styles
-
-                        # 应用样式
-                        def apply_styles(df_style):
-                            for row_idx in range(len(display_ddf)):
-                                styles = style_risk_match_row(row_idx)
-                                for col_idx, col_name in enumerate(display_ddf.columns):
-                                    if styles[col_idx]:
-                                        df_style = df_style.applymap(
-                                            lambda x: styles[col_idx],
-                                            subset=pd.IndexSlice[row_idx, col_name]
-                                        )
-                            return df_style
 
                         # 使用 Styler 应用行着色
                         styled_detail = display_ddf.style
