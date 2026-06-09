@@ -190,18 +190,44 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
 
 
 # ─────────────────────────────────────────────
-# 修复：从CSV读取 uplimit_holding_position
+# 修复：从CSV读取 uplimit_holding_position（产品级别）
 # ─────────────────────────────────────────────
 
-def load_uplimit_holding_position() -> dict[str, float] | None:
+def get_uplimit_file_path(product: str, data_date: int) -> str:
     """
-    从CSV文件读取 uplimit_holding_position
-    文件路径: /cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv
+    根据产品名称获取对应的 uplimit CSV 文件路径
     
-    :return: {instrument: uplimit_holding_position} 的字典
+    :param product: 产品名称 (zz1h, bgt_ax1h, shjq, shph1h)
+    :param data_date: YYYYMMDD 格式的日期
+    :return: CSV 文件路径
     """
-    # ⭐ 修复：统一使用这个路径
-    csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
+    path_mapping = {
+        "zz1h":      f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+        "bgt_ax1h":  f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
+        "shjq":      f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
+        "shph1h":    f"/cpfs/rawdata/cnc_all_nedd_before_open/margin_uplimit_shph1h_zx_{data_date}.csv",
+    }
+    
+    if product not in path_mapping:
+        return None
+    
+    return path_mapping[product]
+
+
+def load_uplimit_holding_position(product: str, data_date: int) -> dict[str, float] | None:
+    """
+    从CSV文件读取 uplimit_holding_position（按产品动态路径）
+    
+    :param product: 产品名称 (zz1h, bgt_ax1h, shjq, shph1h)
+    :param data_date: YYYYMMDD 格式的日期
+    :return: {instrument: up_limit_holding_position} 的字典
+    """
+    # ⭐ 根据产品名称获取对应的文件路径
+    csv_path = get_uplimit_file_path(product, data_date)
+    
+    if csv_path is None:
+        # print(f"⚠️ load_uplimit_holding_position: No path mapping for product '{product}'")
+        return None
     
     uplimit_data = {}
     
@@ -209,17 +235,17 @@ def load_uplimit_holding_position() -> dict[str, float] | None:
         df, err = safe_read_csv(csv_path)
         
         if err or df is None or df.empty:
-            # print(f"❌ load_uplimit_holding_position: {err}")
+            # print(f"❌ load_uplimit_holding_position [{product}]: {err}")
             return None
         
-        # print(f"✅ load_uplimit_holding_position: CSV loaded, shape={df.shape}, columns={list(df.columns)}")
+        # print(f"✅ load_uplimit_holding_position [{product}]: CSV loaded from {csv_path}, shape={df.shape}")
         
-        # 必须有 instrument 和 uplimit_holding_position 两列
+        # 必须有 instrument 和 up_limit_holding_position 两列
         if "instrument" not in df.columns or "up_limit_holding_position" not in df.columns:
             # print(f"❌ Missing required columns. Available: {list(df.columns)}")
             return None
         
-        # 逐行读取 - ⭐ 修复：不过滤 uplimit_hp，包括 0 值
+        # 逐行读取
         loaded_count = 0
         for idx, row in df.iterrows():
             try:
@@ -239,7 +265,7 @@ def load_uplimit_holding_position() -> dict[str, float] | None:
                 # print(f"⚠️ Parse error for row {idx}: {e}")
                 continue
         
-        # print(f"✅ Loaded {loaded_count} instruments from uplimit CSV")
+        # print(f"✅ Loaded {loaded_count} instruments from uplimit CSV for product '{product}'")
         return uplimit_data if uplimit_data else None
     
     except Exception as e:
@@ -272,8 +298,7 @@ def calculate_uplimit(instrument: str, product_name: str,
         return None
     
     if instrument not in uplimit_data:
-        # ⭐ 修复：添加日志，便于调试
-        # print(f"⚠️ calculate_uplimit: instrument '{instrument}' not in uplimit_data. Available: {list(uplimit_data.keys())[:5]}...")
+        # print(f"⚠️ calculate_uplimit: instrument '{instrument}' not in uplimit_data")
         return None
     
     uplimit_hp = uplimit_data[instrument]
@@ -286,7 +311,6 @@ def calculate_uplimit(instrument: str, product_name: str,
     except Exception as e:
         # print(f"❌ calculate_uplimit error for {instrument}: {e}")
         return None
-
 
 # ─────────────────────────────────────────────
 # AUM RESOLVER
@@ -896,7 +920,7 @@ def calculate_product(
     # ⭐ 新逻辑：加载 uplimit_holding_position（仅对商品期货）
     uplimit_holding_position_data = None
     if market == "commodity":
-        uplimit_holding_position_data = load_uplimit_holding_position()
+        uplimit_holding_position_data = load_uplimit_holding_position(product, data_date)
 
     # ── 6. Per-instrument calculations ───────────────────────
     market_value          = 0.0
