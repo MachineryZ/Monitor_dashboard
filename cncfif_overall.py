@@ -638,11 +638,12 @@ SUMMARY_COLS = [
     "market", "product", "broker",
     "init_capital",
     "balance", "pre_balance", "market_value",
-    "cost", "ret", "net_return", "fee", "pnl",
+    "net_return", "fee", "pnl",
     "max_margin", "product_low_limit",
     "margin", "margin_ratio",
     "update_time", "time", "warnings", "deposit_withdraw", "is_market_open",
 ]
+
 
 DEFAULT_SUMMARY = {
     "market": "",
@@ -652,8 +653,6 @@ DEFAULT_SUMMARY = {
     "balance": 0,
     "pre_balance": 0,
     "market_value": 0,
-    "cost": 0,
-    "ret": 0,
     "net_return": 0,
     "fee": "0.000%",
     "pnl": "0.000%",
@@ -666,6 +665,7 @@ DEFAULT_SUMMARY = {
     "warnings": "",
     "is_market_open": False,
 }
+
 
 
 def _get_last_trade_time_adjusted(
@@ -853,21 +853,22 @@ def calculate_product(
         ])
 
     try:
-        data["ret"] = float(
+        abs_return = float(
             (pd_df.get("position_profit", pd.Series([0])).fillna(0)
              + pd_df.get("close_profit",  pd.Series([0])).fillna(0)).sum()
         )
     except Exception as e:
         warnings_list.append(f"PnL calculation error: {e}")
-        data["ret"] = 0.0
+        abs_return = 0.0
 
     # ── 3. 计算 net_return 和 fee ─────────────────────────────
-    data["net_return"] = data["ret"] - fee
+    data["net_return"] = abs_return - fee
     if init_capital > 0:
         fee_pct = (fee / init_capital) * 100
         data["fee"] = f"{fee_pct:.3f}%"
     else:
         data["fee"] = "0.000%"
+
 
     # ── 4. PnL ───────────────────────────────────────────────
     if init_capital > 0:
@@ -1198,7 +1199,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     summary_rows = []
 
     df_numeric = df.copy()
-    for col in ["balance", "pre_balance", "init_capital", "cost", "ret", "net_return", "market_value"]:
+    for col in ["balance", "pre_balance", "init_capital", "net_return", "market_value"]:
         if col in df_numeric.columns:
             df_numeric[col] = pd.to_numeric(
                 df_numeric[col].astype(str).str.replace(",", ""),
@@ -1207,18 +1208,15 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 
     def _build_row(label: str, subset: pd.DataFrame) -> dict:
         aum         = subset["init_capital"].sum()
-        cost        = subset["cost"].sum()
-        ret         = subset["ret"].sum()
         net_return  = subset["net_return"].sum()
         pnl_pct     = (net_return / aum * 100) if aum > 0 else 0.0
         return {
             "summary":    label,
             "aum":        int(aum),
-            "cost":       int(cost),
-            "ret":        int(ret),
             "net_return": int(net_return),
             "pnl":        f"{pnl_pct:.3f}%",
         }
+
 
     cncf_data = df_numeric[df_numeric["market"] == "cncf"]
     cnif_data = df_numeric[df_numeric["market"] == "cnif"]
@@ -1230,7 +1228,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     summary_rows.append(_build_row("cn_all", df_numeric))
 
     summary_df = pd.DataFrame(summary_rows)
-    for col in ["aum", "cost", "ret", "net_return"]:
+    for col in ["aum", "net_return"]:
         summary_df[col] = summary_df[col].apply(lambda x: f"{x:,}")
 
     return summary_df
@@ -1338,12 +1336,11 @@ def dashboard():
 
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
 
-            # ⭐ 修改：将 cost 和 ret 转换为数字，net_return 也转换
-            # 然后格式化为货币格式（带逗号）
             money_cols = [
                 "balance", "pre_balance", "market_value",
-                "deposit_withdraw", "cost", "ret", "net_return", "init_capital", "margin"
+                "deposit_withdraw", "net_return", "init_capital", "margin"
             ]
+
             for col in money_cols:
                 df[col] = (
                     pd.to_numeric(df[col], errors="coerce")
