@@ -193,15 +193,26 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
 # 修复：从CSV读取 uplimit_holding_position
 # ─────────────────────────────────────────────
 
-def load_uplimit_holding_position() -> dict[str, float] | None:
+def load_uplimit_holding_position(product: str, data_date: int) -> dict[str, float] | None:
     """
     从CSV文件读取 uplimit_holding_position
-    文件路径: /cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv
     
-    :return: {instrument: uplimit_holding_position} 的字典
+    根据产品名称和日期动态获取文件路径，并读取 up_limit_holding_position 列
+    
+    Args:
+        product: 产品代码（"zz1h", "bgt_ax1h", "shjq", "shph1h"）
+        data_date: YYYYMMDD 格式的日期
+    
+    Returns:
+        {instrument: uplimit_holding_position} 的字典，或 None
     """
-    # ⭐ 修复：统一使用这个路径
-    csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
+    
+    # ⭐ 新增：根据产品和日期获取文件路径
+    csv_path = get_uplimit_holding_position_path(product, data_date)
+    
+    if not csv_path:
+        # print(f"⚠️ load_uplimit_holding_position: No path mapping for product '{product}'")
+        return None
     
     uplimit_data = {}
     
@@ -212,14 +223,14 @@ def load_uplimit_holding_position() -> dict[str, float] | None:
             # print(f"❌ load_uplimit_holding_position: {err}")
             return None
         
-        # print(f"✅ load_uplimit_holding_position: CSV loaded, shape={df.shape}, columns={list(df.columns)}")
+        # print(f"✅ load_uplimit_holding_position: CSV loaded, path={csv_path}, shape={df.shape}")
         
-        # 必须有 instrument 和 uplimit_holding_position 两列
+        # 必须有 instrument 和 up_limit_holding_position 两列
         if "instrument" not in df.columns or "up_limit_holding_position" not in df.columns:
             # print(f"❌ Missing required columns. Available: {list(df.columns)}")
             return None
         
-        # 逐行读取 - ⭐ 修复：不过滤 uplimit_hp，包括 0 值
+        # 逐行读取 - 允许 0 值和非零值
         loaded_count = 0
         for idx, row in df.iterrows():
             try:
@@ -239,7 +250,7 @@ def load_uplimit_holding_position() -> dict[str, float] | None:
                 # print(f"⚠️ Parse error for row {idx}: {e}")
                 continue
         
-        # print(f"✅ Loaded {loaded_count} instruments from uplimit CSV")
+        # print(f"✅ Loaded {loaded_count} instruments from uplimit CSV (product={product}, date={data_date})")
         return uplimit_data if uplimit_data else None
     
     except Exception as e:
@@ -448,6 +459,31 @@ def get_margin_file_path(path: str, market: str, data_date: int) -> str:
             f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv",
     }
     return mapping.get(path, "")
+
+# ─────────────────────────────────────────────
+# 获取 uplimit_holding_position 文件路径
+# ─────────────────────────────────────────────
+
+def get_uplimit_holding_position_path(product: str, data_date: int) -> str:
+    """
+    根据产品名称和日期获取 uplimit_holding_position CSV 文件路径
+    
+    Args:
+        product: 产品代码（"zz1h", "bgt_ax1h", "shjq", "shph1h"）
+        data_date: YYYYMMDD 格式的日期
+    
+    Returns:
+        CSV 文件路径
+    """
+    # ⭐ 产品名称到文件路径的映射
+    path_mapping = {
+        "zz1h": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+        "bgt_ax1h": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
+        "shjq": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
+        "shph1h": f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shph1h_zx_{data_date}.csv",  # ⭐ 注意：这个路径目录不同
+    }
+    
+    return path_mapping.get(product, "")
 
 
 def get_static_info_path(market: str) -> str:
@@ -896,7 +932,7 @@ def calculate_product(
     # ⭐ 新逻辑：加载 uplimit_holding_position（仅对商品期货）
     uplimit_holding_position_data = None
     if market == "commodity":
-        uplimit_holding_position_data = load_uplimit_holding_position()
+        uplimit_holding_position_data = load_uplimit_holding_position(product, data_date)
 
     # ── 6. Per-instrument calculations ───────────────────────
     market_value          = 0.0
