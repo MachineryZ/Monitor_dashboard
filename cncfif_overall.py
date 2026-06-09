@@ -94,6 +94,16 @@ PRODUCT_CONFIGS = [
         "db_product":   None,
     },
 ]
+# ─────────────────────────────────────────────
+# PRODUCT TO DB_PRODUCT MAPPING
+# ─────────────────────────────────────────────
+
+PRODUCT_TO_DB_PRODUCT = {
+    "zz1h":       "commodity_melt",
+    "bgt_ax1h":   "commodity_melt_bgt",
+    "shjq":       "cncf_melt_shjq_zx",
+    "shph1h":     "commodity_melt_shph_zx",
+}
 
 
 # ─────────────────────────────────────────────
@@ -154,12 +164,15 @@ def get_product_clip(product_name: str) -> int | None:
         # print(f"get_product_clip Query failed: {e}")
         return None
 
-
 def get_product_uplimit_coef(product_name: str) -> float | None:
     """
     根据 product_name 查询 coef（uplimit系数）
-    :param product_name: 产品名，如 'melt'
-    :return: coef 数值（double），如果不存在返回 None
+    
+    Args:
+        product_name: 产品名，如 'commodity_melt', 'commodity_melt_bgt', 'cncf_melt_shjq_zx', 'commodity_melt_shph_zx'
+    
+    Returns:
+        coef 数值（double），如果不存在返回 None
     """
     if not product_name:
         return None
@@ -168,10 +181,11 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
     if client is None:
         return None
     
+    # ⭐ 修复：使用传入的 product_name 参数，而不是硬编码的 'all'
     query = f"""
         SELECT coef
         FROM commodity_meta.product_uplimit_coef
-        WHERE product_name = 'all'
+        WHERE product_name = '{product_name}'
         LIMIT 1
     """
     
@@ -180,12 +194,14 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
 
         if not result.empty:
             coef = float(result.iloc[0]["coef"])
+            # print(f"✅ get_product_uplimit_coef: product_name='{product_name}', coef={coef}")
             return coef
         else:
+            # print(f"⚠️ get_product_uplimit_coef: No record found for product_name='{product_name}'")
             return None
 
     except Exception as e:
-        # print(f"get_product_uplimit_coef Query failed: {e}")
+        # print(f"❌ get_product_uplimit_coef Query failed for '{product_name}': {e}")
         return None
 
 
@@ -925,6 +941,18 @@ def calculate_product(
     # ── 5. 加载 risk_position、clip 和 uplimit 数据 ────────────
     risk_position_map = load_risk_position(market, product, data_date)
     
+    # 查询 clip
+    db_product = cfg.get("db_product")
+    clip = get_product_clip(db_product) if db_product else None
+    
+    # ⭐ 验证：打印当前产品的 db_product 值
+    # print(f"[DEBUG] product={product}, db_product={db_product}")
+    
+    # ⭐ 新逻辑：加载 uplimit_holding_position（仅对商品期货）
+    uplimit_holding_position_data = None
+    if market == "commodity":
+        uplimit_holding_position_data = load_uplimit_holding_position(product, data_date)
+
     # 查询 clip
     db_product = cfg.get("db_product")
     clip = get_product_clip(db_product) if db_product else None
