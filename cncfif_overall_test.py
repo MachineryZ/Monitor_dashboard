@@ -744,33 +744,49 @@ def _get_last_trade_time_adjusted(
 
 
 def _check_risk_position_match(
-    actual_pos: float,
-    risk_pos: float | None,
+    actual_pos: float | int,
+    risk_pos: float | int | None,
 ) -> str:
     """
     检查实际仓位和目标仓位是否匹配
     
     返回: "matched", "yellow", "red"
     
-    规则（需求4）:
+    规则：
     - 实际仓位有，目标仓位没有 → yellow
     - 实际仓位没有，目标仓位有 → yellow
     - 两者都有，但不相等 → red
-    - 其他 → matched
+    - 两者都一致 → matched
+    
+    ⭐ 采用整数比较以避免浮点数精度问题
     """
+    # ⭐ 转换为整数（四舍五入，防止浮点数误差）
+    try:
+        actual_pos = int(round(float(actual_pos))) if actual_pos is not None else 0
+    except (ValueError, TypeError):
+        actual_pos = 0
+    
+    try:
+        risk_pos = int(round(float(risk_pos))) if risk_pos is not None else None
+    except (ValueError, TypeError):
+        risk_pos = None
+    
+    # 目标仓位无数据
     if risk_pos is None:
-        # 目标仓位无数据
         if actual_pos != 0:
             return "yellow"  # 实际有，目标没有
         return "matched"
     
+    # 实际没有，目标有
     if actual_pos == 0 and risk_pos != 0:
-        return "yellow"  # 实际没有，目标有
+        return "yellow"
     
+    # 实际有，目标没有
     if actual_pos != 0 and risk_pos == 0:
-        return "yellow"  # 实际有，目标没有
+        return "yellow"
     
-    if abs(actual_pos - risk_pos) > 1e-6:
+    # ⭐ 整数比较（精确，无浮点数精度问题）
+    if actual_pos != risk_pos:
         return "red"  # 两者都有但不相等
     
     return "matched"
@@ -982,6 +998,8 @@ def calculate_product(
             inst_warnings.append(f"risk_position error: {e}")
             has_warning = True
             risk_pos = None
+        actual_total = int(round(long_pos + short_pos))
+
 
         # ⭐ 新逻辑：计算 uplimit = uplimit_holding_position × coef
         uplimit_value = None
@@ -992,8 +1010,6 @@ def calculate_product(
             inst_warnings.append(f"uplimit calculation error: {e}")
             has_warning = True
 
-        # ── 长仓行 ─────────────────────────────────────────────
-        actual_total = long_pos + short_pos
         if long_pos > 0 or (long_pos == 0 and short_pos == 0):
             try:
                 cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
@@ -1031,7 +1047,6 @@ def calculate_product(
                 inst_warnings.append(f"LONG row error: {e}")
                 has_warning = True
 
-        # ── 短仓行 ───────────────────────────────────────────
         if short_pos > 0:
             try:
                 cp_short = float(short_rows["close_profit"].iloc[0]) if not short_rows.empty else 0.0
