@@ -261,10 +261,10 @@ def calculate_uplimit(instrument: str, product_name: str,
     """
     
     # 1. 查询 coef
-    coef = get_product_uplimit_coef(product_name)
-    if coef is None:
-        # print(f"⚠️ calculate_uplimit: coef is None for product {product_name}")
-        return None
+    coef = get_product_uplimit_coef(product_name) or 1
+    # if coef is None:
+    #     # print(f"⚠️ calculate_uplimit: coef is None for product {product_name}")
+    #     return None
     
     # 2. 从 uplimit_data 获取 uplimit_holding_position
     if uplimit_data is None:
@@ -979,8 +979,8 @@ def calculate_product(
         # ⭐ 新逻辑：计算 uplimit = uplimit_holding_position × coef
         uplimit_value = None
         try:
-            if market == "commodity" and db_product:
-                uplimit_value = calculate_uplimit(inst, db_product, uplimit_holding_position_data)
+            if market == "commodity":
+                uplimit_value = calculate_uplimit(inst, "all", uplimit_holding_position_data)
         except Exception as e:
             inst_warnings.append(f"uplimit calculation error: {e}")
             has_warning = True
@@ -1018,7 +1018,7 @@ def calculate_product(
                     "position":          int(long_pos),
                     "risk_position":     risk_pos,
                     "clip":              clip,
-                    "uplimit":           round(uplimit_value, 2) if uplimit_value is not None else None,
+                    "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
                     "position_type":     "LONG",
                     "close_profit":      round(cp_long, 2),
                     "position_profit":   round(pp_long, 2),
@@ -1051,7 +1051,7 @@ def calculate_product(
                     "position":          -int(short_pos),
                     "risk_position":     risk_pos,
                     "clip":              clip,
-                    "uplimit":           None,
+                    "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
                     "position_type":     "SHORT",
                     "close_profit":      round(cp_short, 2),
                     "position_profit":   round(pp_short, 2),
@@ -1428,16 +1428,10 @@ def dashboard():
                         display_ddf = ddf[
                             [c for c in display_cols if c in ddf.columns]
                         ].copy()
+                        
 
-                        if "market_value" in display_ddf.columns:
-                            display_ddf["market_value"] = (
-                                pd.to_numeric(display_ddf["market_value"], errors="coerce")
-                                .fillna(0)
-                                .astype(int)
-                                .apply(lambda x: f"{x:,}")
-                            )
-
-                        int_cols = ["risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
+                        # ⭐ 新增：格式化为整数（仅保留整数，无小数点）
+                        int_cols = ["market_value", "risk_position", "close_profit", "position_profit", "total_pnl", "instrument_margin"]
                         for col in int_cols:
                             if col in display_ddf.columns:
                                 display_ddf[col] = pd.to_numeric(display_ddf[col], errors="coerce").fillna(0).astype(int)
@@ -1446,7 +1440,15 @@ def dashboard():
                             display_ddf["uplimit"] = display_ddf["uplimit"].apply(
                                 lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None
                             )
-
+                            
+                        if "market_value" in display_ddf.columns:
+                            display_ddf["market_value"] = (
+                                pd.to_numeric(display_ddf["market_value"], errors="coerce")
+                                .fillna(0)
+                                .astype(int)
+                                .apply(lambda x : f"{x:,}")
+                            )
+                            
                         # 重新标记列名
                         col_mapping = {
                             "instrument":        "合约名称",
@@ -1487,7 +1489,7 @@ def dashboard():
                                 # 对这一行应用样式
                                 for col_idx, (col_name, style) in enumerate(zip(display_ddf.columns, row_styles)):
                                     if style:
-                                        styled_detail = styled_detail.applymap(
+                                        styled_detail = styled_detail.map(
                                             lambda x, s=style: s,
                                             subset=pd.IndexSlice[[row_idx], col_name]
                                         )
