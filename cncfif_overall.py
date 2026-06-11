@@ -893,7 +893,7 @@ def calculate_product(
     db_product = cfg.get("db_product")
     clip = get_product_clip(db_product) if db_product else None
     
-    # ⭐ 新逻辑：加载 uplimit_holding_position（仅对商品期货）
+    # 加载 uplimit_holding_position（仅对商品期货）
     uplimit_holding_position_data = None
     if market == "commodity":
         uplimit_holding_position_data = load_uplimit_holding_position()
@@ -910,6 +910,10 @@ def calculate_product(
         if not pd_df.empty else []
     )
 
+    # ⭐ 新增：从 risk_position_map 获取所有目标仓位的合约，确保不遗漏
+    if risk_position_map:
+        instruments = list(set(instruments) | set(risk_position_map.keys()))
+
     trade_path = get_trade_file_path(path, data_date)
     trade_df, trade_err = safe_read_csv(trade_path)
     if trade_err:
@@ -922,8 +926,8 @@ def calculate_product(
         try:
             long_rows  = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'LONG'")
             short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
-            long_pos   = int(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
-            short_pos  = int(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
+            long_pos   = int(long_rows["position"].iloc[0])  if not long_rows.empty  else 0
+            short_pos  = int(short_rows["position"].iloc[0]) if not short_rows.empty else 0
         except Exception as e:
             inst_warnings.append(f"position parsing error: {e}")
             long_pos = short_pos = 0
@@ -976,7 +980,7 @@ def calculate_product(
             has_warning = True
             last_trade_time = ""
 
-        # ⭐ 新逻辑：计算 uplimit = uplimit_holding_position × coef
+        # 计算 uplimit
         uplimit_value = None
         try:
             if market == "commodity":
@@ -993,28 +997,29 @@ def calculate_product(
             has_warning = True
             risk_pos = None
         
-        # ⭐ 一次性检查，结果会被 LONG 行和 SHORT 行共用
+        # ⭐ 检查 risk_position 匹配状态
         risk_match = _check_risk_position_match(net_pos, risk_pos)
         if risk_match == "red":
             has_risk = True
         elif risk_match == "yellow":
             has_warning = True
 
-        # ── 长仓行 ─────────────────────────────────────────────
-        if long_pos > 0 or (long_pos == 0 and short_pos == 0):
+        # ⭐ 修改逻辑：确保每个合约至少生成一行数据
+        # 如果有长仓，生成长仓行
+        if long_pos > 0:
             try:
                 cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
                 pp_long = float(long_rows["position_profit"].iloc[0]) if not long_rows.empty else 0.0
                 total_pnl_long = cp_long + pp_long
                 
                 inst_margin_long = price * long_pos * multiplier * margin_ratio
-                inst_market_value_long = price * long_pos * multiplier  # ⭐ 新增
+                inst_market_value_long = price * long_pos * multiplier
                 market_value += inst_market_value_long
                 instrument_margin_max = max(inst_margin_long, instrument_margin_max)
                 
                 detail_rows.append({
                     "instrument":        inst,
-                    "market_value":      round(inst_market_value_long, 2),  # ⭐ 新增
+                    "market_value":      round(inst_market_value_long, 2),
                     "position":          int(long_pos),
                     "risk_position":     risk_pos,
                     "clip":              clip,
@@ -1033,8 +1038,7 @@ def calculate_product(
                 inst_warnings.append(f"LONG row error: {e}")
                 has_warning = True
 
-
-        # ── 短仓行 ───────────────────────────────────────────
+        # 如果有短仓，生成短仓行
         if short_pos > 0:
             try:
                 cp_short = float(short_rows["close_profit"].iloc[0]) if not short_rows.empty else 0.0
@@ -1042,12 +1046,12 @@ def calculate_product(
                 total_pnl_short = cp_short + pp_short
                 
                 inst_margin_short = price * short_pos * multiplier * margin_ratio
-                inst_market_value_short = price * short_pos * multiplier  # ⭐ 新增
+                inst_market_value_short = price * short_pos * multiplier
                 market_value += inst_market_value_short
                 
                 detail_rows.append({
                     "instrument":        inst,
-                    "market_value":      round(inst_market_value_short, 2),  # ⭐ 新增
+                    "market_value":      round(inst_market_value_short, 2),
                     "position":          -int(short_pos),
                     "risk_position":     risk_pos,
                     "clip":              clip,
@@ -1066,6 +1070,25 @@ def calculate_product(
                 inst_warnings.append(f"SHORT row error: {e}")
                 has_warning = True
 
+        # ⭐ 新增：如果持仓为 0 但目标仓位非 0，生成一行警告行
+        if long_pos == 0 and short_pos == 0 and risk_pos is not None and risk_pos != 0:
+            detail_rows.append({
+                "instrument":        inst,
+                "market_value":      0,
+                "position":          0,
+                "risk_position":     risk_pos,
+                "clip":              clip,
+                "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
+                "position_type":     "NONE",
+                "close_profit":      0.0,
+                "position_profit":   0.0,
+                "total_pnl":         0.0,
+                "instrument_margin": 0.0,
+                "exchange":          exchange,
+                "last_trade_time":   last_trade_time,
+                "risk_match":        risk_match,
+                "_warnings":         "; ".join(inst_warnings),
+            })
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
@@ -1083,14 +1106,12 @@ def calculate_product(
 
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
     
-    # 需求5：标题着色规则
     detail_status = {
         "has_warning": has_warning,
         "has_risk": has_risk,
     }
     
     return data, detail_df, detail_status
-
 
 
 # ─────────────────────────────────────────────
