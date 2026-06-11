@@ -744,41 +744,40 @@ def _get_last_trade_time_adjusted(
 
 
 def _check_risk_position_match(
-    actual_pos: float,
+    long_pos: float | None,
+    short_pos: float | None,
     risk_pos: float | None,
 ) -> str:
     """
-    检查实际仓位和目标仓位是否匹配（基于净仓位）
+    检查实际仓位和目标仓位是否匹配
     
     规则:
-    - 实际有仓位，目标没有 → yellow (警告)
-    - 实际没有仓位，目标有 → yellow (警告)
-    - 两者都有，但数值不相等 → red (错误)
-    - 都为0 或 相等 → matched (正常)
+    - net_pos = long_pos + short_pos（如果为 None 则视作 0）
+    - risk_pos 如果为 None 也视作 0
+    - net_pos != risk_pos → red (错误)
+    - net_pos == risk_pos → matched (正常)
+    
+    Args:
+        long_pos: 长仓数量（可能为 None）
+        short_pos: 短仓数量（可能为 None）
+        risk_pos: 目标仓位（可能为 None）
+    
+    Returns:
+        "red" 或 "matched"
     """
-    # 转为整数比较（因为持仓数量必须是整数）
-    actual_int = int(round(actual_pos)) if actual_pos is not None else 0
+    # 处理 None 值
+    long_int = int(round(long_pos)) if long_pos is not None else 0
+    short_int = int(round(short_pos)) if short_pos is not None else 0
+    risk_int = int(round(risk_pos)) if risk_pos is not None else 0
     
-    if risk_pos is None:
-        risk_int = 0
-    else:
-        risk_int = int(round(risk_pos))
+    # 计算净仓位
+    net_pos = long_int + short_int
     
-    # 规则1：实际有持仓，但目标仓位为0或无
-    if actual_int != 0 and risk_int == 0:
-        return "yellow"
-    
-    # 规则2：实际没有持仓，但目标仓位有值
-    if actual_int == 0 and risk_int != 0:
-        return "yellow"
-    
-    # 规则3：两者都有持仓，但数值不相等
-    if actual_int != 0 and risk_int != 0 and actual_int != risk_int:
+    # 比较
+    if net_pos != risk_int:
         return "red"
-    
-    # 其他情况（都为0，或两者相等）
-    return "matched"
-
+    else:
+        return "matched"
 
 def calculate_product(
     cfg: dict,
@@ -989,7 +988,7 @@ def calculate_product(
             inst_warnings.append(f"uplimit calculation error: {e}")
             has_warning = True
 
-        net_pos = long_pos - short_pos
+        # ⭐ 修改：long_pos 和 short_pos 本身已经是数字或 0，直接用
         try:
             risk_pos = risk_position_map.get(inst) if risk_position_map else None
         except Exception as e:
@@ -997,98 +996,98 @@ def calculate_product(
             has_warning = True
             risk_pos = None
         
-        # ⭐ 检查 risk_position 匹配状态
-        risk_match = _check_risk_position_match(net_pos, risk_pos)
+        # ⭐ 修改：调用新逻辑，传入 long_pos 和 short_pos，而不是 net_pos
+        risk_match = _check_risk_position_match(long_pos, short_pos, risk_pos)
         if risk_match == "red":
             has_risk = True
-        elif risk_match == "yellow":
-            has_warning = True
 
-        # ⭐ 修改逻辑：确保每个合约至少生成一行数据
-        # 如果有长仓，生成长仓行
-        if long_pos > 0:
-            try:
-                cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
-                pp_long = float(long_rows["position_profit"].iloc[0]) if not long_rows.empty else 0.0
-                total_pnl_long = cp_long + pp_long
-                
-                inst_margin_long = price * long_pos * multiplier * margin_ratio
-                inst_market_value_long = price * long_pos * multiplier
-                market_value += inst_market_value_long
-                instrument_margin_max = max(inst_margin_long, instrument_margin_max)
-                
+
+        # ⭐ 确保每个合约至少生成一行（无论是否有持仓）
+        if long_pos > 0 or short_pos > 0 or (risk_pos is not None and risk_pos != 0):
+            # 如果有长仓，生成长仓行
+            if long_pos > 0:
+                try:
+                    cp_long = float(long_rows["close_profit"].iloc[0]) if not long_rows.empty else 0.0
+                    pp_long = float(long_rows["position_profit"].iloc[0]) if not long_rows.empty else 0.0
+                    total_pnl_long = cp_long + pp_long
+                    
+                    inst_margin_long = price * long_pos * multiplier * margin_ratio
+                    inst_market_value_long = price * long_pos * multiplier
+                    market_value += inst_market_value_long
+                    instrument_margin_max = max(inst_margin_long, instrument_margin_max)
+                    
+                    detail_rows.append({
+                        "instrument":        inst,
+                        "market_value":      round(inst_market_value_long, 2),
+                        "position":          int(long_pos),
+                        "risk_position":     risk_pos,
+                        "clip":              clip,
+                        "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
+                        "position_type":     "LONG",
+                        "close_profit":      round(cp_long, 2),
+                        "position_profit":   round(pp_long, 2),
+                        "total_pnl":         round(total_pnl_long, 2),
+                        "instrument_margin": round(inst_margin_long, 2),
+                        "exchange":          exchange,
+                        "last_trade_time":   last_trade_time,
+                        "risk_match":        risk_match,
+                        "_warnings":         "; ".join(inst_warnings),
+                    })
+                except Exception as e:
+                    inst_warnings.append(f"LONG row error: {e}")
+                    has_warning = True
+
+            # 如果有短仓，生成短仓行
+            if short_pos > 0:
+                try:
+                    cp_short = float(short_rows["close_profit"].iloc[0]) if not short_rows.empty else 0.0
+                    pp_short = float(short_rows["position_profit"].iloc[0]) if not short_rows.empty else 0.0
+                    total_pnl_short = cp_short + pp_short
+                    
+                    inst_margin_short = price * short_pos * multiplier * margin_ratio
+                    inst_market_value_short = price * short_pos * multiplier
+                    market_value += inst_market_value_short
+                    
+                    detail_rows.append({
+                        "instrument":        inst,
+                        "market_value":      round(inst_market_value_short, 2),
+                        "position":          -int(short_pos),
+                        "risk_position":     risk_pos,
+                        "clip":              clip,
+                        "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
+                        "position_type":     "SHORT",
+                        "close_profit":      round(cp_short, 2),
+                        "position_profit":   round(pp_short, 2),
+                        "total_pnl":         round(total_pnl_short, 2),
+                        "instrument_margin": 0.0,
+                        "exchange":          exchange,
+                        "last_trade_time":   last_trade_time,
+                        "risk_match":        risk_match,
+                        "_warnings":         "; ".join(inst_warnings),
+                    })
+                except Exception as e:
+                    inst_warnings.append(f"SHORT row error: {e}")
+                    has_warning = True
+
+            # ⭐ 新增：如果持仓为 0 但目标仓位非 0，生成一行空仓行
+            if long_pos == 0 and short_pos == 0 and risk_pos is not None and risk_pos != 0:
                 detail_rows.append({
                     "instrument":        inst,
-                    "market_value":      round(inst_market_value_long, 2),
-                    "position":          int(long_pos),
+                    "market_value":      0,
+                    "position":          0,
                     "risk_position":     risk_pos,
                     "clip":              clip,
                     "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
-                    "position_type":     "LONG",
-                    "close_profit":      round(cp_long, 2),
-                    "position_profit":   round(pp_long, 2),
-                    "total_pnl":         round(total_pnl_long, 2),
-                    "instrument_margin": round(inst_margin_long, 2),
-                    "exchange":          exchange,
-                    "last_trade_time":   last_trade_time,
-                    "risk_match":        risk_match,
-                    "_warnings":         "; ".join(inst_warnings),
-                })
-            except Exception as e:
-                inst_warnings.append(f"LONG row error: {e}")
-                has_warning = True
-
-        # 如果有短仓，生成短仓行
-        if short_pos > 0:
-            try:
-                cp_short = float(short_rows["close_profit"].iloc[0]) if not short_rows.empty else 0.0
-                pp_short = float(short_rows["position_profit"].iloc[0]) if not short_rows.empty else 0.0
-                total_pnl_short = cp_short + pp_short
-                
-                inst_margin_short = price * short_pos * multiplier * margin_ratio
-                inst_market_value_short = price * short_pos * multiplier
-                market_value += inst_market_value_short
-                
-                detail_rows.append({
-                    "instrument":        inst,
-                    "market_value":      round(inst_market_value_short, 2),
-                    "position":          -int(short_pos),
-                    "risk_position":     risk_pos,
-                    "clip":              clip,
-                    "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
-                    "position_type":     "SHORT",
-                    "close_profit":      round(cp_short, 2),
-                    "position_profit":   round(pp_short, 2),
-                    "total_pnl":         round(total_pnl_short, 2),
+                    "position_type":     "NONE",
+                    "close_profit":      0.0,
+                    "position_profit":   0.0,
+                    "total_pnl":         0.0,
                     "instrument_margin": 0.0,
                     "exchange":          exchange,
                     "last_trade_time":   last_trade_time,
                     "risk_match":        risk_match,
                     "_warnings":         "; ".join(inst_warnings),
                 })
-            except Exception as e:
-                inst_warnings.append(f"SHORT row error: {e}")
-                has_warning = True
-
-        # ⭐ 新增：如果持仓为 0 但目标仓位非 0，生成一行警告行
-        if long_pos == 0 and short_pos == 0 and risk_pos is not None and risk_pos != 0:
-            detail_rows.append({
-                "instrument":        inst,
-                "market_value":      0,
-                "position":          0,
-                "risk_position":     risk_pos,
-                "clip":              clip,
-                "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
-                "position_type":     "NONE",
-                "close_profit":      0.0,
-                "position_profit":   0.0,
-                "total_pnl":         0.0,
-                "instrument_margin": 0.0,
-                "exchange":          exchange,
-                "last_trade_time":   last_trade_time,
-                "risk_match":        risk_match,
-                "_warnings":         "; ".join(inst_warnings),
-            })
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
