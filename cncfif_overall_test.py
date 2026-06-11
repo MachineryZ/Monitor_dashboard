@@ -1440,15 +1440,7 @@ def dashboard():
                             display_ddf["uplimit"] = display_ddf["uplimit"].apply(
                                 lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None
                             )
-                            
-                        if "market_value" in display_ddf.columns:
-                            display_ddf["market_value"] = (
-                                pd.to_numeric(display_ddf["market_value"], errors="coerce")
-                                .fillna(0)
-                                .astype(int)
-                                .apply(lambda x : f"{x:,}")
-                            )
-                            
+
                         # 重新标记列名
                         col_mapping = {
                             "instrument":        "合约名称",
