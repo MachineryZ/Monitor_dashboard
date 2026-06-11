@@ -771,7 +771,8 @@ def _check_risk_position_match(
     risk_int = int(round(risk_pos)) if risk_pos is not None else 0
     
     # 计算净仓位
-    net_pos = long_int + short_int
+    net_pos = long_int - short_int
+    # print(f"long_int = {long_int}, short_int = {short_int}, risk_int = {risk_int}")
     
     # 比较
     if net_pos != risk_int:
@@ -1069,24 +1070,24 @@ def calculate_product(
                     has_warning = True
 
             # ⭐ 新增：如果持仓为 0 但目标仓位非 0，生成一行空仓行
-            if long_pos == 0 and short_pos == 0 and risk_pos is not None and risk_pos != 0:
-                detail_rows.append({
-                    "instrument":        inst,
-                    "market_value":      0,
-                    "position":          0,
-                    "risk_position":     risk_pos,
-                    "clip":              clip,
-                    "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
-                    "position_type":     "NONE",
-                    "close_profit":      0.0,
-                    "position_profit":   0.0,
-                    "total_pnl":         0.0,
-                    "instrument_margin": 0.0,
-                    "exchange":          exchange,
-                    "last_trade_time":   last_trade_time,
-                    "risk_match":        risk_match,
-                    "_warnings":         "; ".join(inst_warnings),
-                })
+        if long_pos == 0 and short_pos == 0 and risk_pos is not None and risk_pos != 0:
+            detail_rows.append({
+                "instrument":        inst,
+                "market_value":      0,
+                "position":          0,
+                "risk_position":     risk_pos,
+                "clip":              clip,
+                "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
+                "position_type":     "NONE",
+                "close_profit":      0.0,
+                "position_profit":   0.0,
+                "total_pnl":         0.0,
+                "instrument_margin": 0.0,
+                "exchange":          exchange,
+                "last_trade_time":   last_trade_time,
+                "risk_match":        risk_match,
+                "_warnings":         "; ".join(inst_warnings),
+            })
 
     data["market_value"] = market_value
     data["product_low_limit"] = (
