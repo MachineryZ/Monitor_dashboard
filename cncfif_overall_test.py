@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import requests
 import json
 import datetime
@@ -574,7 +575,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
         strategy_mapping = {
             "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
             "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
-            "zz1h": "cnif_short_zz1h_dz_dashboard_bohr",
+            "zz1h": "cnif_short_zz1h_zx_dashboard_bohr",
         }
         
         if product not in strategy_mapping:
@@ -772,6 +773,7 @@ def _check_risk_position_match(
     
     # 计算净仓位
     net_pos = long_int - short_int
+    # print(f"long_int = {long_int}, short_int = {short_int}, risk_int = {risk_int}")
     
     # 比较
     if net_pos != risk_int:
@@ -1508,6 +1510,28 @@ def dashboard():
                                         )
 
                         st.dataframe(styled_detail, width="stretch")
+
+                        # ⭐ 新增：红色仓位异常注释（仿照黄色 warning 格式）
+                        if "risk_match" in ddf.columns and "instrument" in ddf.columns:
+                            risk_red_rows = ddf[ddf["risk_match"] == "red"]
+                            if not risk_red_rows.empty:
+                                st.error("🔴 **Instrument Risk Errors (Position Mismatch):**")
+                                for _, rr in risk_red_rows.iterrows():
+                                    inst_name  = rr["instrument"]
+                                    pos_type   = rr.get("position_type", "")
+                                    actual_pos = rr.get("position", 0)
+                                    risk_pos   = rr.get("risk_position", None)
+                                    if risk_pos is None:
+                                        risk_pos = 0
+                                    elif math.isnan(risk_pos):
+                                        risk_pos = 0
+                                    risk_pos_display = int(round(risk_pos)) if (risk_pos is not None) else 0
+                                    st.markdown(
+                                        f"- **{inst_name}** ({pos_type}): "
+                                        f"实际持仓 = `{actual_pos}`, "
+                                        f"目标仓位 = `{risk_pos_display}` "
+                                        f"→ 净仓位与目标仓位不一致"
+                                    )
 
                         # 显示警告信息
                         if "_warnings" in ddf.columns:

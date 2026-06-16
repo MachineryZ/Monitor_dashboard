@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import requests
 import json
 import datetime
@@ -574,7 +575,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
         strategy_mapping = {
             "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
             "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
-            "zz1h": "cnif_short_zz1h_dz_dashboard_bohr",
+            "zz1h": "cnif_short_zz1h_zx_dashboard_bohr",
         }
         
         if product not in strategy_mapping:
@@ -1520,7 +1521,9 @@ def dashboard():
                                     pos_type   = rr.get("position_type", "")
                                     actual_pos = rr.get("position", 0)
                                     risk_pos   = rr.get("risk_position", None)
-                                    risk_pos_display = int(round(risk_pos)) if risk_pos is not None else 0
+                                    if math.isnan(risk_pos):
+                                        risk_pos = 0
+                                    risk_pos_display = int(round(risk_pos)) if (risk_pos is not None) else 0
                                     st.markdown(
                                         f"- **{inst_name}** ({pos_type}): "
                                         f"实际持仓 = `{actual_pos}`, "
