@@ -1337,6 +1337,33 @@ def dashboard():
                         ]
                         display_ddf = ddf[[c for c in display_cols if c in ddf.columns]].copy()
 
+                        # ★ 新增：风险状态指示列
+                        def _get_risk_indicator(row_idx):
+                            """为每一行生成风险指示符号"""
+                            if row_idx >= len(ddf):
+                                return "⚪"
+                            row = ddf.iloc[row_idx]
+                            
+                            # 检查风险匹配
+                            if row.get("risk_match") == "red":
+                                return "🔴 仓位异常"  # 红圈 + 标签
+                            
+                            # 检查保证金
+                            try:
+                                instr_margin = float(row.get("instrument_margin", 0))
+                                balance = float(df[df["product"] == cfg["product"]]["balance"].iloc[0]
+                                            .replace(",", "")) if cfg["product"] in df["product"].values else 1
+                                if instr_margin / balance > 0.25 if balance > 0 else False:
+                                    return "🟠 保证金高"  # 橙圈
+                            except (ValueError, TypeError, IndexError):
+                                pass
+                            
+                            return "🟢"  # 绿圈，正常
+                        
+                        # 添加指示符列到显示 dataframe 最前
+                        display_ddf.insert(0, "状态", [_get_risk_indicator(i) for i in range(len(display_ddf))])
+
+                        # 整数格式化（保持原逻辑）
                         int_cols = [
                             "market_value", "risk_position",
                             "close_profit", "position_profit", "total_pnl", "instrument_margin",
@@ -1371,11 +1398,25 @@ def dashboard():
                         }
                         display_ddf = display_ddf.rename(columns=col_mapping)
 
+                        # ★ 改进的行着色函数：根据状态列和对应风险位置着色
                         def style_risk_match_row(row_idx):
                             styles = [""] * len(display_ddf.columns)
                             if row_idx < len(ddf) and "risk_match" in ddf.columns:
                                 if ddf.iloc[row_idx].get("risk_match") == "red":
+                                    # 红色：仓位异常
                                     styles = ["background-color: #ff4b4b; color: white; font-weight: bold;"] * len(display_ddf.columns)
+                                else:
+                                    # 绿色：正常
+                                    try:
+                                        instr_margin = float(ddf.iloc[row_idx].get("instrument_margin", 0))
+                                        balance_val = float(
+                                            df[df["product"] == cfg["product"]]["balance"].iloc[0].replace(",", "")
+                                        ) if cfg["product"] in df["product"].values else 1
+                                        if instr_margin / balance_val > 0.25 if balance_val > 0 else False:
+                                            # 橙色：保证金过高
+                                            styles = ["background-color: #ffa500; color: white; font-weight: bold;"] * len(display_ddf.columns)
+                                    except (ValueError, TypeError, IndexError):
+                                        pass
                             return styles
 
                         styled_detail = display_ddf.style
@@ -1391,30 +1432,21 @@ def dashboard():
 
                         st.dataframe(styled_detail, use_container_width=True)
 
-                        with st.expander("Detail 字段说明 - 交易统计列", expanded=False):
-                            st.dataframe(pd.DataFrame({
-                                "字段名": ["买开手数","买开市值","买平手数","买平市值",
-                                           "卖开手数","卖开市值","卖平手数","卖平市值"],
-                                "direction 值": ["66(B)","66(B)","66(B)","66(B)",
-                                                 "83(S)","83(S)","83(S)","83(S)"],
-                                "offset_flag 值": ["79(O)","79(O)","67(C)/84(T)","67(C)/84(T)",
-                                                    "79(O)","79(O)","67(C)/84(T)","67(C)/84(T)"],
-                                "计算公式": [
-                                    "sum(volume)",
-                                    "sum(price x volume x multiplier)",
-                                    "sum(volume)",
-                                    "sum(price x volume x multiplier)",
-                                    "sum(volume)",
-                                    "sum(price x volume x multiplier)",
-                                    "sum(volume)",
-                                    "sum(price x volume x multiplier)",
-                                ],
-                            }), use_container_width=True, hide_index=True)
+                        # ★ 新增：状态指示说明
+                        with st.expander("状态指示说明", expanded=False):
+                            st.markdown("""
+                            | 符号 | 颜色 | 含义 | 触发条件 |
+                            |---|---|---|---|
+                            | 🔴 | 红 | 仓位异常 | 净仓位 ≠ 目标仓位（risk_position 不匹配） |
+                            | 🟠 | 橙 | 保证金过高 | 单合约保证金占比 > 25% |
+                            | 🟢 | 绿 | 正常 | 无异常风险 |
+                            """)
 
+                        # 仓位异常注释（保持原有逻辑）
                         if "risk_match" in ddf.columns and "instrument" in ddf.columns:
                             risk_red_rows = ddf[ddf["risk_match"] == "red"]
                             if not risk_red_rows.empty:
-                                st.error("**Instrument Risk Errors (Position Mismatch):**")
+                                st.error("**🔴 Instrument Risk Errors (Position Mismatch):**")
                                 for _, rr in risk_red_rows.iterrows():
                                     risk_pos_v = rr.get("risk_position")
                                     try:
@@ -1426,9 +1458,10 @@ def dashboard():
                                         f"- **{rr['instrument']}** ({rr.get('position_type','')}): "
                                         f"实际持仓 = `{rr.get('position', 0)}`, "
                                         f"目标仓位 = `{int(round(float(risk_pos_v))) if risk_pos_v is not None else 0}` "
-                                        f"-> 净仓位与目标仓位不一致"
+                                        f"→ 净仓位与目标仓位不一致"
                                     )
 
+                        # 警告信息
                         if "_warnings" in ddf.columns:
                             inst_warns = ddf[ddf["_warnings"].str.len() > 0]
                             if not inst_warns.empty:
