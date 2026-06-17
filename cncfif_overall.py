@@ -20,13 +20,13 @@ RWP_CREDENTIALS = {
 # ── 产品与银行账户映射 ────────────────────────────────
 # 产品路径 → (fund_id, unit_id)
 PRODUCT_BANK_MAPPING = {
-    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian": (569, 9118),  # 山海CTA进取1号
-    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":   (568, 9122),  # 山海CTA平衡1号
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian": (58, 230),  # 山海CTA进取1号
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":   (569, 9118),  # 山海CTA平衡1号
     "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx": (568, 9122),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":           (568, 9122),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":           (568, 9122),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (568, 9122),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (568, 9122),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":           (215, 1049),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":           (319, 1604),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (34, 216),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (215, 1049),  # 可按需配置
 }
 
 _rwp_api_cache: dict[str, float] = {}  # 缓存银行账户余额
@@ -165,12 +165,12 @@ def get_bank_account_balance(path: str) -> float | None:
     
     try:
         fund_id, unit_id = PRODUCT_BANK_MAPPING[path]
-        
+        today_date = datetime.datetime.now().strftime("%Y%m%d")
         # 构建请求
         req_text = {
             "fund_id": fund_id,
             "unit_id": unit_id,
-            "start_date": "TODAY_DISPLAY"
+            "start_date": today_date
         }
         req_json = json.dumps(req_text)
         
