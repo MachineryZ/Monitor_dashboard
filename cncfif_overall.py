@@ -8,6 +8,29 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from typing import List
+import rwp_api
+import json
+
+# ── RWP API 配置 ──────────────────────────────────────
+RWP_CREDENTIALS = {
+    "username": "jiangl",
+    "password": "666666@dunhe",
+}
+
+# ── 产品与银行账户映射 ────────────────────────────────
+# 产品路径 → (fund_id, unit_id)
+PRODUCT_BANK_MAPPING = {
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian": (569, 9118),  # 山海CTA进取1号
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":   (568, 9122),  # 山海CTA平衡1号
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx": (568, 9122),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":           (568, 9122),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":           (568, 9122),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (568, 9122),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (568, 9122),  # 可按需配置
+}
+
+_rwp_api_cache: dict[str, float] = {}  # 缓存银行账户余额
+_rwp_login_status = False
 
 # ─────────────────────────────────────────────
 # CONSTANTS & CONFIGURATION
@@ -95,6 +118,88 @@ PRODUCT_CONFIGS = [
         "db_product":   None,
     },
 ]
+# ─────────────────────────────────────────────
+# RWP API 交互函数
+# ─────────────────────────────────────────────
+
+def rwp_api_login() -> bool:
+    """登录 RWP API"""
+    global _rwp_login_status
+    try:
+        res = rwp_api.login(
+            RWP_CREDENTIALS["username"],
+            RWP_CREDENTIALS["password"]
+        )
+        _rwp_login_status = (res == 1)
+        return _rwp_login_status
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        _rwp_login_status = False
+        return False
+
+
+def get_bank_account_balance(path: str) -> float | None:
+    """
+    根据产品路径获取银行账户余额。
+    
+    返回值：
+    - float: 银行账户余额（total_asset）
+    - None: 获取失败或路径未配置
+    """
+    global _rwp_login_status
+    
+    # 检查路径是否在映射中
+    if path not in PRODUCT_BANK_MAPPING:
+        return None
+    
+    # 检查缓存
+    cache_key = f"bank_{path}"
+    if cache_key in _rwp_api_cache:
+        return _rwp_api_cache[cache_key]
+    
+    # 尝试登录（如果未登录过）
+    if not _rwp_login_status:
+        if not rwp_api_login():
+            return None
+    
+    try:
+        fund_id, unit_id = PRODUCT_BANK_MAPPING[path]
+        
+        # 构建请求
+        req_text = {
+            "fund_id": fund_id,
+            "unit_id": unit_id,
+            "start_date": ":TODAY_DISPLAY"
+        }
+        req_json = json.dumps(req_text)
+        
+        # 调用 API
+        resp = rwp_api.get_unit_asset_chart(req_json)
+        
+        # 提取银行账户余额
+        bank_account = resp['unit_list'][0]['nav_list'][0]['total_asset']
+        bank_account = float(bank_account)
+        
+        # 缓存结果
+        _rwp_api_cache[cache_key] = bank_account
+        
+        return bank_account
+    
+    except KeyError as e:
+        import traceback
+        traceback.print_exc()
+        return None
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def clear_bank_cache():
+    """清空银行账户余额缓存（用于刷新）"""
+    global _rwp_api_cache
+    _rwp_api_cache.clear()
 
 
 # ─────────────────────────────────────────────
@@ -661,22 +766,22 @@ def style_max_margin(val):
 # CORE: calculate_product
 # ─────────────────────────────────────────────
 
-# ★ 修改：SUMMARY_COLS 新增8列
+# ★ 修改：SUMMARY_COLS 在 pre_balance 之后加入 bank
 SUMMARY_COLS = [
     "market", "product", "broker",
     "init_capital",
-    "balance", "pre_balance", "market_value",
+    "balance", "pre_balance", "bank",  # ★ 新增 bank
+    "market_value",
     "cost", "net_return", "fee", "pnl",
     "max_margin", "product_low_limit",
-    "margin", "margin_ratio",
+    "margin", "margin_ratio", "update_time", "time", 
     "BuyOpenNumber", "BuyOpenMarketValue",
     "BuyCloseNumber", "BuyCloseMarketValue",
     "SellOpenNumber", "SellOpenMarketValue",
     "SellCloseNumber", "SellCloseMarketValue",
-    "update_time", "time", "warnings", "deposit_withdraw", "is_market_open",
+    "warnings", "deposit_withdraw", "is_market_open",
 ]
 
-# ★ 修改：DEFAULT_SUMMARY 新增8列默认值
 DEFAULT_SUMMARY = {
     "market": "",
     "product": "",
@@ -684,6 +789,7 @@ DEFAULT_SUMMARY = {
     "init_capital": 0,
     "balance": 0,
     "pre_balance": 0,
+    "bank": 0,  # ★ 新增默认值
     "market_value": 0,
     "cost": 0,
     "net_return": 0,
@@ -693,6 +799,7 @@ DEFAULT_SUMMARY = {
     "product_low_limit": 0.0,
     "margin": 0.0,
     "margin_ratio": "0.000%",
+    "time": "",
     "BuyOpenNumber":       0,
     "BuyOpenMarketValue":  0,
     "BuyCloseNumber":      0,
@@ -702,11 +809,9 @@ DEFAULT_SUMMARY = {
     "SellCloseNumber":     0,
     "SellCloseMarketValue":0,
     "deposit_withdraw": 0,
-    "time": "",
     "warnings": "",
     "is_market_open": False,
 }
-
 
 def _get_last_trade_time_adjusted(
     trade_df: pd.DataFrame | None,
@@ -830,6 +935,21 @@ def calculate_product(
     data["margin"]           = margin
     init_capital = resolve_init_capital(cfg, pre_balance, balance)
     data["init_capital"] = init_capital
+    
+    # ★ 新增：获取银行账户余额并计算 bank 列
+    try:
+        bank_account = get_bank_account_balance(path)
+        if bank_account is not None:
+            # bank = pre_balance + (bank_account - pre_balance)
+            # 简化：bank = bank_account（银行账户余额）
+            # 或者按你的需求：bank = pre_balance + 某个固定差值
+            data["bank"] = bank_account
+        else:
+            # 如果获取失败，使用 pre_balance 作为默认值
+            data["bank"] = pre_balance
+    except Exception as e:
+        warnings_list.append(f"bank account fetch error: {e}")
+        data["bank"] = pre_balance
 
     # ── 2. position_data ─────────────────────────────────────
     pd_path = os.path.join(path, f"position_data_{data_date}.csv")
@@ -1153,7 +1273,7 @@ def display_overview_with_tooltips(styled_df):
         field_data = {
             "字段名": [
                 "market", "product", "broker", "init_capital",
-                "balance", "pre_balance", "market_value",
+                "balance", "pre_balance", "bank","market_value",
                 "cost", "ret", "net_return", "fee",
                 "pnl", "max_margin", "product_low_limit",
                 "margin", "margin_ratio",
@@ -1186,6 +1306,7 @@ def display_overview_with_tooltips(styled_df):
                 "初始资金/策略规模 = pre_balance × aum_mul（或自定义公式）",
                 "当前账户余额 = 前日余额 + 入金 - 出金 + 盈亏 - 手续费",
                 "前一交易日的账户余额，用于计算初始资金基数",
+                "银行账户余额，通过 RWP API 从基金单元净值资产获取（total_asset 字段）"
                 "当前持仓市值 = sum(合约数量 × 市场价格 × 合约乘数)",
                 "累计手续费，交易费用总和",
                 "总回报/盈亏 = 平仓盈亏 + 持仓盈亏",
@@ -1234,7 +1355,7 @@ def display_overview_with_tooltips(styled_df):
 def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     summary_rows = []
     df_numeric = df.copy()
-    for col in ["balance", "pre_balance", "init_capital", "cost", "net_return", "market_value"]:
+    for col in ["balance", "pre_balance", "bank", "init_capital", "cost", "net_return", "market_value"]:
         if col in df_numeric.columns:
             df_numeric[col] = pd.to_numeric(
                 df_numeric[col].astype(str).str.replace(",", ""),
@@ -1371,7 +1492,7 @@ def dashboard():
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
 
             money_cols = [
-                "balance", "pre_balance", "market_value",
+                "balance", "pre_balance", "bank","market_value",
                 "deposit_withdraw", "cost", "net_return", "init_capital", "margin"
             ]
             for col in money_cols:
