@@ -509,15 +509,12 @@ _OPEN_FLAGS  = {79, 48, 0}
 _CLOSE_FLAGS = {67, 68}
 
 # ─── 汇总级别（overview 用）：计算整个产品的8列之和 ───────────────
+# ─── 汇总级别（overview 用）：计算整个产品的8列之和 ───────────────
 def _calc_trade_stats_product(
     trade_df: pd.DataFrame | None,
     price_map: dict,       # {instrument: price}
     multiplier_map: dict,  # {instrument: multiplier}
 ) -> dict:
-    """
-    对整个产品（所有合约）汇总计算8列统计值，用于 overview 行。
-    返回 {BuyOpenNumber, BuyOpenMarketValue, ..., SellCloseMarketValue}
-    """
     zero = {
         "BuyOpenNumber":       0,
         "BuyOpenMarketValue":  0,
@@ -531,16 +528,17 @@ def _calc_trade_stats_product(
     if trade_df is None or trade_df.empty:
         return zero
 
-    # 确认必需列
-    needed = {"instrument_id", "direction", "offset_flag", "traded_volume"}
+    # ★ 修复：trade_data 的成交量字段名是 volume，不是 traded_volume
+    needed = {"instrument_id", "direction", "offset_flag", "volume"}
     if not needed.issubset(trade_df.columns):
         return zero
 
     try:
         df = trade_df.copy()
-        df["direction"]     = pd.to_numeric(df["direction"],     errors="coerce").fillna(0).astype(int)
-        df["offset_flag"]   = pd.to_numeric(df["offset_flag"],   errors="coerce").fillna(0).astype(int)
-        df["traded_volume"] = pd.to_numeric(df["traded_volume"], errors="coerce").fillna(0)
+        df["direction"]   = pd.to_numeric(df["direction"],   errors="coerce").fillna(0).astype(int)
+        df["offset_flag"] = pd.to_numeric(df["offset_flag"], errors="coerce").fillna(0).astype(int)
+        # ★ 修复：使用正确的列名 volume
+        df["volume"]      = pd.to_numeric(df["volume"],      errors="coerce").fillna(0)
 
         buy_open   = df[(df["direction"] == 66) & (df["offset_flag"].isin(_OPEN_FLAGS))]
         buy_close  = df[(df["direction"] == 66) & (df["offset_flag"].isin(_CLOSE_FLAGS))]
@@ -550,20 +548,22 @@ def _calc_trade_stats_product(
         def _mv(subset: pd.DataFrame) -> float:
             total = 0.0
             for inst, grp in subset.groupby("instrument_id"):
-                vol = grp["traded_volume"].sum()
+                # ★ 修复：使用正确的列名 volume
+                vol = grp["volume"].sum()
                 p   = price_map.get(inst, 0.0)
                 mul = multiplier_map.get(inst, 1.0)
                 total += vol * p * mul
             return round(total, 2)
 
         result = {
-            "BuyOpenNumber":        int(buy_open["traded_volume"].sum()),
+            # ★ 修复：使用正确的列名 volume
+            "BuyOpenNumber":        int(buy_open["volume"].sum()),
             "BuyOpenMarketValue":   _mv(buy_open),
-            "BuyCloseNumber":       int(buy_close["traded_volume"].sum()),
+            "BuyCloseNumber":       int(buy_close["volume"].sum()),
             "BuyCloseMarketValue":  _mv(buy_close),
-            "SellOpenNumber":       int(sell_open["traded_volume"].sum()),
+            "SellOpenNumber":       int(sell_open["volume"].sum()),
             "SellOpenMarketValue":  _mv(sell_open),
-            "SellCloseNumber":      int(sell_close["traded_volume"].sum()),
+            "SellCloseNumber":      int(sell_close["volume"].sum()),
             "SellCloseMarketValue": _mv(sell_close),
         }
         return result
@@ -578,10 +578,6 @@ def _calc_trade_stats_for_inst(
     price: float,
     multiplier: float,
 ) -> dict:
-    """
-    对单个合约计算8列统计值，用于 detail 行。
-    返回 {BuyOpenNumber, BuyOpenMarketValue, ..., SellCloseMarketValue}
-    """
     zero = {
         "BuyOpenNumber":       0,
         "BuyOpenMarketValue":  0,
@@ -595,7 +591,8 @@ def _calc_trade_stats_for_inst(
     if trade_df is None or trade_df.empty:
         return zero
 
-    needed = {"instrument_id", "direction", "offset_flag", "traded_volume"}
+    # ★ 修复：trade_data 的成交量字段名是 volume，不是 traded_volume
+    needed = {"instrument_id", "direction", "offset_flag", "volume"}
     if not needed.issubset(trade_df.columns):
         return zero
 
@@ -604,14 +601,16 @@ def _calc_trade_stats_for_inst(
         if df.empty:
             return zero
 
-        df["direction"]     = pd.to_numeric(df["direction"],     errors="coerce").fillna(0).astype(int)
-        df["offset_flag"]   = pd.to_numeric(df["offset_flag"],   errors="coerce").fillna(0).astype(int)
-        df["traded_volume"] = pd.to_numeric(df["traded_volume"], errors="coerce").fillna(0)
+        df["direction"]   = pd.to_numeric(df["direction"],   errors="coerce").fillna(0).astype(int)
+        df["offset_flag"] = pd.to_numeric(df["offset_flag"], errors="coerce").fillna(0).astype(int)
+        # ★ 修复：使用正确的列名 volume
+        df["volume"]      = pd.to_numeric(df["volume"],      errors="coerce").fillna(0)
 
-        buy_open_n   = int(df[(df["direction"] == 66) & (df["offset_flag"].isin(_OPEN_FLAGS))]["traded_volume"].sum())
-        buy_close_n  = int(df[(df["direction"] == 66) & (df["offset_flag"].isin(_CLOSE_FLAGS))]["traded_volume"].sum())
-        sell_open_n  = int(df[(df["direction"] == 83) & (df["offset_flag"].isin(_OPEN_FLAGS))]["traded_volume"].sum())
-        sell_close_n = int(df[(df["direction"] == 83) & (df["offset_flag"].isin(_CLOSE_FLAGS))]["traded_volume"].sum())
+        # ★ 修复：使用正确的列名 volume
+        buy_open_n   = int(df[(df["direction"] == 66) & (df["offset_flag"].isin(_OPEN_FLAGS))]["volume"].sum())
+        buy_close_n  = int(df[(df["direction"] == 66) & (df["offset_flag"].isin(_CLOSE_FLAGS))]["volume"].sum())
+        sell_open_n  = int(df[(df["direction"] == 83) & (df["offset_flag"].isin(_OPEN_FLAGS))]["volume"].sum())
+        sell_close_n = int(df[(df["direction"] == 83) & (df["offset_flag"].isin(_CLOSE_FLAGS))]["volume"].sum())
 
         mv_mul = price * multiplier
         return {
