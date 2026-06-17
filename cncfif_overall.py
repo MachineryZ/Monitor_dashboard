@@ -1196,7 +1196,6 @@ def display_overview_with_tooltips(styled_df):
                 "持仓市值占比 = 持仓市值 / 账户余额，警告阈值 < 0.8",
                 "当前占用保证金 = sum(持仓数量 × 价格 × 乘数 × 保证金率)",
                 "保证金占用比 = 占用保证金 / 前日余额",
-                # ★ 新增8列说明
                 "买入开仓手数：trade_data 中 direction=66(买) 且 offset_flag∈{79,48,0}(开仓) 的 traded_volume 之和",
                 "买入开仓市值：BuyOpenNumber × 当前价格 × 合约乘数，反映买入开仓的名义价值",
                 "买入平仓手数：trade_data 中 direction=66(买) 且 offset_flag∈{67,68}(平仓/平今) 的 traded_volume 之和",
