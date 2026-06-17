@@ -1440,7 +1440,6 @@ def dashboard():
                     title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
                     with st.expander(title, expanded=False):
-                        # ⭐ 修改列顺序：instrument, position, risk_position, clip, uplimit, 其他...
                         display_cols = [
                             "instrument", "market_value",  # ⭐ market_value 插入此处
                             "position", "risk_position", "clip", "uplimit",
@@ -1467,7 +1466,7 @@ def dashboard():
                         # 重新标记列名
                         col_mapping = {
                             "instrument":        "合约名称",
-                            "market_value":      "合约市值",   # ⭐ 新增
+                            "market_value":      "合约市值", 
                             "position":          "持仓数量",
                             "risk_position":     "目标仓位",
                             "clip":              "Clip",
@@ -1482,7 +1481,6 @@ def dashboard():
 
                         display_ddf = display_ddf.rename(columns=col_mapping)
 
-                        # ⭐ 需求2：红色整行着色（对 risk_match == "red" 的行）
                         def style_risk_match_row(row_idx):
                             """对 risk_match == "red" 的整行着色"""
                             styles = [""] * len(display_ddf.columns)
