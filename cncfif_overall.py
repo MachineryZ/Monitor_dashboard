@@ -1273,11 +1273,10 @@ def display_overview_with_tooltips(styled_df):
         field_data = {
             "字段名": [
                 "market", "product", "broker", "init_capital",
-                "balance", "pre_balance", "bank","market_value",
+                "balance", "pre_balance", "bank", "market_value",
                 "cost", "ret", "net_return", "fee",
                 "pnl", "max_margin", "product_low_limit",
                 "margin", "margin_ratio",
-                # ★ 新增8列
                 "BuyOpenNumber", "BuyOpenMarketValue",
                 "BuyCloseNumber", "BuyCloseMarketValue",
                 "SellOpenNumber", "SellOpenMarketValue",
@@ -1287,11 +1286,10 @@ def display_overview_with_tooltips(styled_df):
             ],
             "分类": [
                 "市场", "市场", "市场", "资金",
-                "资金", "资金", "持仓",
+                "资金", "资金", "资金", "持仓",  # ★ 修复：bank→资金，market_value→持仓
                 "资金", "资金", "资金", "资金",
                 "资金", "风险", "风险",
                 "风险", "风险",
-                # ★ 新增8列分类
                 "交易统计", "交易统计",
                 "交易统计", "交易统计",
                 "交易统计", "交易统计",
@@ -1306,7 +1304,7 @@ def display_overview_with_tooltips(styled_df):
                 "初始资金/策略规模 = pre_balance × aum_mul（或自定义公式）",
                 "当前账户余额 = 前日余额 + 入金 - 出金 + 盈亏 - 手续费",
                 "前一交易日的账户余额，用于计算初始资金基数",
-                "银行账户余额，通过 RWP API 从基金单元净值资产获取（total_asset 字段）"
+                "银行账户余额，通过 RWP API 从基金单元净值资产获取（total_asset 字段）",
                 "当前持仓市值 = sum(合约数量 × 市场价格 × 合约乘数)",
                 "累计手续费，交易费用总和",
                 "总回报/盈亏 = 平仓盈亏 + 持仓盈亏",
@@ -1317,13 +1315,13 @@ def display_overview_with_tooltips(styled_df):
                 "持仓市值占比 = 持仓市值 / 账户余额，警告阈值 < 0.8",
                 "当前占用保证金 = sum(持仓数量 × 价格 × 乘数 × 保证金率)",
                 "保证金占用比 = 占用保证金 / 前日余额",
-                "买入开仓手数：trade_data 中 direction=66(买) 且 offset_flag∈{79,48,0}(开仓) 的 traded_volume 之和",
+                "买入开仓手数：trade_data 中 direction=66(买) 且 offset_flag 属于{79,48,0}(开仓) 的 volume 之和",
                 "买入开仓市值：BuyOpenNumber × 当前价格 × 合约乘数，反映买入开仓的名义价值",
-                "买入平仓手数：trade_data 中 direction=66(买) 且 offset_flag∈{67,68}(平仓/平今) 的 traded_volume 之和",
+                "买入平仓手数：trade_data 中 direction=66(买) 且 offset_flag 属于{67,68}(平仓/平今) 的 volume 之和",
                 "买入平仓市值：BuyCloseNumber × 当前价格 × 合约乘数，反映买入平仓的名义价值",
-                "卖出开仓手数：trade_data 中 direction=83(卖) 且 offset_flag∈{79,48,0}(开仓) 的 traded_volume 之和",
+                "卖出开仓手数：trade_data 中 direction=83(卖) 且 offset_flag 属于{79,48,0}(开仓) 的 volume 之和",
                 "卖出开仓市值：SellOpenNumber × 当前价格 × 合约乘数，反映卖出开仓的名义价值",
-                "卖出平仓手数：trade_data 中 direction=83(卖) 且 offset_flag∈{67,68}(平仓/平今) 的 traded_volume 之和",
+                "卖出平仓手数：trade_data 中 direction=83(卖) 且 offset_flag 属于{67,68}(平仓/平今) 的 volume 之和",
                 "卖出平仓市值：SellCloseNumber × 当前价格 × 合约乘数，反映卖出平仓的名义价值",
                 "最后一次数据更新时刻，从数据文件中提取的时间戳",
                 "当前仪表板查询时刻（系统时间）",
@@ -1338,15 +1336,14 @@ def display_overview_with_tooltips(styled_df):
         st.markdown("---")
         st.markdown("""
 **风险阈值速查：**
-- `max_margin` > **25%** → 单合约保证金过高 (红色告警)
-- `product_low_limit` < **0.8** → 流动性不足 (红色告警，ly1h 为黄色)
+- `max_margin` > **25%** -> 单合约保证金过高 (红色告警)
+- `product_low_limit` < **0.8** -> 流动性不足 (红色告警，ly1h 为黄色)
 
 **交易统计编码说明：**
 - `direction`: 66 = 买(Buy/B)，83 = 卖(Sell/S)
 - `offset_flag`: 79/48/0 = 开仓(Open)，67 = 平仓(Close)，68 = 平今(CloseToday)
-- 数据来源：`trade_data_{date}.csv`，字段 `traded_volume`
+- 数据来源：`trade_data_{date}.csv`，字段 `volume`
         """)
-
 
 # ─────────────────────────────────────────────
 # BUILD SUMMARY TABLE
