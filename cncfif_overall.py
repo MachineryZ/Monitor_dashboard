@@ -170,7 +170,7 @@ def get_bank_account_balance(path: str) -> float | None:
         req_text = {
             "fund_id": fund_id,
             "unit_id": unit_id,
-            "start_date": ":TODAY_DISPLAY"
+            "start_date": "TODAY_DISPLAY"
         }
         req_json = json.dumps(req_text)
         
