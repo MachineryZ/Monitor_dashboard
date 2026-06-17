@@ -766,21 +766,22 @@ def style_max_margin(val):
 # CORE: calculate_product
 # ─────────────────────────────────────────────
 
-# ★ 修改：SUMMARY_COLS 在 pre_balance 之后加入 bank
 SUMMARY_COLS = [
     "market", "product", "broker",
     "init_capital",
-    "balance", "pre_balance", "bank",  # ★ 新增 bank
+    "balance", "pre_balance", "bank",
     "market_value",
     "cost", "net_return", "fee", "pnl",
     "max_margin", "product_low_limit",
-    "margin", "margin_ratio", "update_time", "time", 
-    "BuyOpenNumber", "BuyOpenMarketValue",
-    "BuyCloseNumber", "BuyCloseMarketValue",
-    "SellOpenNumber", "SellOpenMarketValue",
-    "SellCloseNumber", "SellCloseMarketValue",
+    "margin", "margin_ratio", "update_time", "time",
+    # ★ 每个 MarketValue 后面紧跟对应的 Ratio
+    "BuyOpenNumber",  "BuyOpenMarketValue",  "BuyOpenMarketValueRatio",
+    "BuyCloseNumber", "BuyCloseMarketValue", "BuyCloseMarketValueRatio",
+    "SellOpenNumber", "SellOpenMarketValue", "SellOpenMarketValueRatio",
+    "SellCloseNumber","SellCloseMarketValue","SellCloseMarketValueRatio",
     "warnings", "deposit_withdraw", "is_market_open",
 ]
+
 
 DEFAULT_SUMMARY = {
     "market": "",
@@ -789,7 +790,7 @@ DEFAULT_SUMMARY = {
     "init_capital": 0,
     "balance": 0,
     "pre_balance": 0,
-    "bank": 0,  # ★ 新增默认值
+    "bank": 0,
     "market_value": 0,
     "cost": 0,
     "net_return": 0,
@@ -800,18 +801,23 @@ DEFAULT_SUMMARY = {
     "margin": 0.0,
     "margin_ratio": "0.000%",
     "time": "",
-    "BuyOpenNumber":       0,
-    "BuyOpenMarketValue":  0,
-    "BuyCloseNumber":      0,
-    "BuyCloseMarketValue": 0,
-    "SellOpenNumber":      0,
-    "SellOpenMarketValue": 0,
-    "SellCloseNumber":     0,
-    "SellCloseMarketValue":0,
+    "BuyOpenNumber":              0,
+    "BuyOpenMarketValue":         0,
+    "BuyOpenMarketValueRatio":    "0.000%",
+    "BuyCloseNumber":             0,
+    "BuyCloseMarketValue":        0,
+    "BuyCloseMarketValueRatio":   "0.000%",
+    "SellOpenNumber":             0,
+    "SellOpenMarketValue":        0,
+    "SellOpenMarketValueRatio":   "0.000%",
+    "SellCloseNumber":            0,
+    "SellCloseMarketValue":       0,
+    "SellCloseMarketValueRatio":  "0.000%",
     "deposit_withdraw": 0,
     "warnings": "",
     "is_market_open": False,
 }
+
 
 def _get_last_trade_time_adjusted(
     trade_df: pd.DataFrame | None,
@@ -1222,6 +1228,23 @@ def calculate_product(
     except Exception as e:
         warnings_list.append(f"trade stats calculation error: {e}")
 
+    # ★ 新增：计算4个 MarketValue Ratio = MarketValue / init_capital
+    try:
+        _ratio_pairs = [
+            ("BuyOpenMarketValue",   "BuyOpenMarketValueRatio"),
+            ("BuyCloseMarketValue",  "BuyCloseMarketValueRatio"),
+            ("SellOpenMarketValue",  "SellOpenMarketValueRatio"),
+            ("SellCloseMarketValue", "SellCloseMarketValueRatio"),
+        ]
+        for mv_col, ratio_col in _ratio_pairs:
+            mv_val = float(data.get(mv_col, 0) or 0)
+            if init_capital > 0:
+                data[ratio_col] = mv_val / init_capital
+            else:
+                data[ratio_col] = 0.0
+    except Exception as e:
+        warnings_list.append(f"market value ratio calculation error: {e}")
+
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
 
     detail_status = {
@@ -1277,23 +1300,25 @@ def display_overview_with_tooltips(styled_df):
                 "cost", "ret", "net_return", "fee",
                 "pnl", "max_margin", "product_low_limit",
                 "margin", "margin_ratio",
-                "BuyOpenNumber", "BuyOpenMarketValue",
-                "BuyCloseNumber", "BuyCloseMarketValue",
-                "SellOpenNumber", "SellOpenMarketValue",
-                "SellCloseNumber", "SellCloseMarketValue",
+                # ★ 每个 MarketValue 后面紧跟 Ratio
+                "BuyOpenNumber",  "BuyOpenMarketValue",  "BuyOpenMarketValueRatio",
+                "BuyCloseNumber", "BuyCloseMarketValue", "BuyCloseMarketValueRatio",
+                "SellOpenNumber", "SellOpenMarketValue", "SellOpenMarketValueRatio",
+                "SellCloseNumber","SellCloseMarketValue","SellCloseMarketValueRatio",
                 "update_time", "time",
                 "deposit_withdraw", "warnings",
             ],
             "分类": [
                 "市场", "市场", "市场", "资金",
-                "资金", "资金", "资金", "持仓",  # ★ 修复：bank→资金，market_value→持仓
+                "资金", "资金", "资金", "持仓",
                 "资金", "资金", "资金", "资金",
                 "资金", "风险", "风险",
                 "风险", "风险",
-                "交易统计", "交易统计",
-                "交易统计", "交易统计",
-                "交易统计", "交易统计",
-                "交易统计", "交易统计",
+                # ★ 交易统计（含新增Ratio）
+                "交易统计", "交易统计", "交易统计",
+                "交易统计", "交易统计", "交易统计",
+                "交易统计", "交易统计", "交易统计",
+                "交易统计", "交易统计", "交易统计",
                 "时间", "时间",
                 "资金", "系统",
             ],
@@ -1315,14 +1340,22 @@ def display_overview_with_tooltips(styled_df):
                 "持仓市值占比 = 持仓市值 / 账户余额，警告阈值 < 0.8",
                 "当前占用保证金 = sum(持仓数量 × 价格 × 乘数 × 保证金率)",
                 "保证金占用比 = 占用保证金 / 前日余额",
-                "买入开仓手数：trade_data 中 direction=66(买) 且 offset_flag 属于{79,48,0}(开仓) 的 volume 之和",
-                "买入开仓市值：BuyOpenNumber × 当前价格 × 合约乘数，反映买入开仓的名义价值",
-                "买入平仓手数：trade_data 中 direction=66(买) 且 offset_flag 属于{67,68}(平仓/平今) 的 volume 之和",
-                "买入平仓市值：BuyCloseNumber × 当前价格 × 合约乘数，反映买入平仓的名义价值",
-                "卖出开仓手数：trade_data 中 direction=83(卖) 且 offset_flag 属于{79,48,0}(开仓) 的 volume 之和",
-                "卖出开仓市值：SellOpenNumber × 当前价格 × 合约乘数，反映卖出开仓的名义价值",
-                "卖出平仓手数：trade_data 中 direction=83(卖) 且 offset_flag 属于{67,68}(平仓/平今) 的 volume 之和",
-                "卖出平仓市值：SellCloseNumber × 当前价格 × 合约乘数，反映卖出平仓的名义价值",
+                # ★ 买开
+                "买入开仓手数：direction=66(买) 且 offset_flag 属于{79,48,0}(开仓) 的 volume 之和",
+                "买入开仓市值：BuyOpenNumber × 当前价格 × 合约乘数",
+                "买入开仓市值占比：BuyOpenMarketValue / init_capital × 100%",  # ★ 新增
+                # ★ 买平
+                "买入平仓手数：direction=66(买) 且 offset_flag 属于{67,68}(平仓/平今) 的 volume 之和",
+                "买入平仓市值：BuyCloseNumber × 当前价格 × 合约乘数",
+                "买入平仓市值占比：BuyCloseMarketValue / init_capital × 100%",  # ★ 新增
+                # ★ 卖开
+                "卖出开仓手数：direction=83(卖) 且 offset_flag 属于{79,48,0}(开仓) 的 volume 之和",
+                "卖出开仓市值：SellOpenNumber × 当前价格 × 合约乘数",
+                "卖出开仓市值占比：SellOpenMarketValue / init_capital × 100%",  # ★ 新增
+                # ★ 卖平
+                "卖出平仓手数：direction=83(卖) 且 offset_flag 属于{67,68}(平仓/平今) 的 volume 之和",
+                "卖出平仓市值：SellCloseNumber × 当前价格 × 合约乘数",
+                "卖出平仓市值占比：SellCloseMarketValue / init_capital × 100%",  # ★ 新增
                 "最后一次数据更新时刻，从数据文件中提取的时间戳",
                 "当前仪表板查询时刻（系统时间）",
                 "净入出金 = 入金 - 出金",
@@ -1508,7 +1541,6 @@ def dashboard():
                 .fillna(0).apply(lambda x: f"{x:.4f}")
             )
 
-            # ★ 新增：格式化8列（MarketValue 保留整数，Number 已是整数）
             trade_mv_cols = [
                 "BuyOpenMarketValue", "BuyCloseMarketValue",
                 "SellOpenMarketValue", "SellCloseMarketValue",
@@ -1520,6 +1552,19 @@ def dashboard():
                         .fillna(0).round(0).astype(int)
                         .apply(lambda x: f"{x:,}")
                     )
+
+            trade_ratio_cols = [
+                "BuyOpenMarketValueRatio",  "BuyCloseMarketValueRatio",
+                "SellOpenMarketValueRatio", "SellCloseMarketValueRatio",
+            ]
+            for col in trade_ratio_cols:
+                if col in df.columns:
+                    df[col] = (
+                        pd.to_numeric(df[col], errors="coerce")
+                        .fillna(0)
+                        .apply(lambda x: f"{x * 100:.3f}%")
+                    )
+
 
             display_df = df.drop(columns=["is_market_open"])
 
