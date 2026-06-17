@@ -1574,32 +1574,6 @@ def dashboard():
                                         f"- **{wr['instrument']}**: {wr['_warnings']}"
                                     )
 
-                        # ★ 新增：Detail 表格下方补充字段说明
-                        with st.expander("Detail 字段说明（含交易统计）", expanded=False):
-                            detail_field_data = {
-                                "字段名": [
-                                    "买开手数 (BuyOpenNumber)",
-                                    "买开市值 (BuyOpenMarketValue)",
-                                    "买平手数 (BuyCloseNumber)",
-                                    "买平市值 (BuyCloseMarketValue)",
-                                    "卖开手数 (SellOpenNumber)",
-                                    "卖开市值 (SellOpenMarketValue)",
-                                    "卖平手数 (SellCloseNumber)",
-                                    "卖平市值 (SellCloseMarketValue)",
-                                ],
-                                "计算逻辑": [
-                                    "trade_data 中该合约 direction=66(买) 且 offset_flag∈{79,48,0}(开仓) 的 traded_volume 求和",
-                                    "买开手数 × 当前价格 × 合约乘数",
-                                    "trade_data 中该合约 direction=66(买) 且 offset_flag∈{67,68}(平仓/平今) 的 traded_volume 求和",
-                                    "买平手数 × 当前价格 × 合约乘数",
-                                    "trade_data 中该合约 direction=83(卖) 且 offset_flag∈{79,48,0}(开仓) 的 traded_volume 求和",
-                                    "卖开手数 × 当前价格 × 合约乘数",
-                                    "trade_data 中该合约 direction=83(卖) 且 offset_flag∈{67,68}(平仓/平今) 的 traded_volume 求和",
-                                    "卖平手数 × 当前价格 × 合约乘数",
-                                ],
-                            }
-                            detail_desc_df = pd.DataFrame(detail_field_data)
-                            st.dataframe(detail_desc_df, width="stretch", hide_index=True)
 
         except Exception as outer_err:
             with placeholder.container():
