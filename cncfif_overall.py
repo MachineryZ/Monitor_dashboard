@@ -775,10 +775,10 @@ SUMMARY_COLS = [
     "max_margin", "product_low_limit",
     "margin", "margin_ratio", "update_time", "time",
     # ★ 每个 MarketValue 后面紧跟对应的 Ratio
-    "BuyOpenNumber",  "BuyOpenMarketValue",  "BuyOpenMarketValueRatio",
-    "BuyCloseNumber", "BuyCloseMarketValue", "BuyCloseMarketValueRatio",
-    "SellOpenNumber", "SellOpenMarketValue", "SellOpenMarketValueRatio",
-    "SellCloseNumber","SellCloseMarketValue","SellCloseMarketValueRatio",
+    "BuyOpenNumber",  "BuyOpenMarketValue",  "BOMVRatio",
+    "BuyCloseNumber", "BuyCloseMarketValue", "BCMVRatio",
+    "SellOpenNumber", "SellOpenMarketValue", "SOMVRatio",
+    "SellCloseNumber","SellCloseMarketValue","SCMVRatio",
     "warnings", "deposit_withdraw", "is_market_open",
 ]
 
@@ -803,16 +803,16 @@ DEFAULT_SUMMARY = {
     "time": "",
     "BuyOpenNumber":              0,
     "BuyOpenMarketValue":         0,
-    "BuyOpenMarketValueRatio":    "0.000%",
+    "BOMVRatio":    "0.000%",
     "BuyCloseNumber":             0,
     "BuyCloseMarketValue":        0,
-    "BuyCloseMarketValueRatio":   "0.000%",
+    "BCMVRatio":   "0.000%",
     "SellOpenNumber":             0,
     "SellOpenMarketValue":        0,
-    "SellOpenMarketValueRatio":   "0.000%",
+    "SOMVRatio":   "0.000%",
     "SellCloseNumber":            0,
     "SellCloseMarketValue":       0,
-    "SellCloseMarketValueRatio":  "0.000%",
+    "SCMVRatio":  "0.000%",
     "deposit_withdraw": 0,
     "warnings": "",
     "is_market_open": False,
@@ -1231,10 +1231,10 @@ def calculate_product(
     # ★ 新增：计算4个 MarketValue Ratio = MarketValue / init_capital
     try:
         _ratio_pairs = [
-            ("BuyOpenMarketValue",   "BuyOpenMarketValueRatio"),
-            ("BuyCloseMarketValue",  "BuyCloseMarketValueRatio"),
-            ("SellOpenMarketValue",  "SellOpenMarketValueRatio"),
-            ("SellCloseMarketValue", "SellCloseMarketValueRatio"),
+            ("BuyOpenMarketValue",   "BOMVRatio"),
+            ("BuyCloseMarketValue",  "BCMVRatio"),
+            ("SellOpenMarketValue",  "SOMVRatio"),
+            ("SellCloseMarketValue", "SCMVRatio"),
         ]
         for mv_col, ratio_col in _ratio_pairs:
             mv_val = float(data.get(mv_col, 0) or 0)
@@ -1301,10 +1301,10 @@ def display_overview_with_tooltips(styled_df):
                 "pnl", "max_margin", "product_low_limit",
                 "margin", "margin_ratio",
                 # ★ 每个 MarketValue 后面紧跟 Ratio
-                "BuyOpenNumber",  "BuyOpenMarketValue",  "BuyOpenMarketValueRatio",
-                "BuyCloseNumber", "BuyCloseMarketValue", "BuyCloseMarketValueRatio",
-                "SellOpenNumber", "SellOpenMarketValue", "SellOpenMarketValueRatio",
-                "SellCloseNumber","SellCloseMarketValue","SellCloseMarketValueRatio",
+                "BuyOpenNumber",  "BuyOpenMarketValue",  "BOMVRatio",
+                "BuyCloseNumber", "BuyCloseMarketValue", "BCMVRatio",
+                "SellOpenNumber", "SellOpenMarketValue", "SOMVRatio",
+                "SellCloseNumber","SellCloseMarketValue","SCMVRatio",
                 "update_time", "time",
                 "deposit_withdraw", "warnings",
             ],
@@ -1554,8 +1554,8 @@ def dashboard():
                     )
 
             trade_ratio_cols = [
-                "BuyOpenMarketValueRatio",  "BuyCloseMarketValueRatio",
-                "SellOpenMarketValueRatio", "SellCloseMarketValueRatio",
+                "BOMVRatio",  "BCMVRatio",
+                "SOMVRatio", "SCMVRatio",
             ]
             for col in trade_ratio_cols:
                 if col in df.columns:
