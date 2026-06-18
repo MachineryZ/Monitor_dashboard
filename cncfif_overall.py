@@ -1003,7 +1003,7 @@ def calculate_product(
     # ── 5. 加载 risk_position、clip 和 uplimit 数据 ────────────
     risk_position_map = load_risk_position(market, product, data_date)
     db_product = cfg.get("db_product")
-    clip = get_product_clip(db_product) if db_product else None
+    clip = product_clip(db_product) if db_product else None
     uplimit_holding_position_data = None
     if market == "commodity":
         uplimit_holding_position_data = load_uplimit_holding_position()
