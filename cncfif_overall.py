@@ -83,7 +83,7 @@ PRODUCT_CONFIGS = [
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
-        "broker":       "zx",
+        "broker":       "dz",
         "product":      "zz1h",
         "market":       "commodity",
         "init_capital": 0,
@@ -1003,7 +1003,7 @@ def calculate_product(
     # ── 5. 加载 risk_position、clip 和 uplimit 数据 ────────────
     risk_position_map = load_risk_position(market, product, data_date)
     db_product = cfg.get("db_product")
-    clip = product_clip(db_product) if db_product else None
+    clip = get_product_clip(db_product) if db_product else None
     uplimit_holding_position_data = None
     if market == "commodity":
         uplimit_holding_position_data = load_uplimit_holding_position()
@@ -1038,24 +1038,28 @@ def calculate_product(
             short_rows = pd_df.query(f"instrument_id == '{inst}' and pos_type == 'SHORT'")
             long_pos   = int(long_rows["position"].iloc[0])  if not long_rows.empty  else 0.0
             short_pos  = int(short_rows["position"].iloc[0]) if not short_rows.empty else 0.0
+            
+            long_today_pos = 0
+            long_yd_pos = 0
+            if not long_rows.empty:
+                if "today_position" in long_rows.columns:
+                    long_today_pos = int(float(long_rows["today_position"].iloc[0]))
+                if "yd_position" in long_rows.columns:
+                    long_yd_pos = int(float(long_rows["yd_position"].iloc[0]))
+            
+            short_today_pos = 0
+            short_yd_pos = 0
+            if not short_rows.empty:
+                if "today_position" in short_rows.columns:
+                    short_today_pos = int(float(short_rows["today_position"].iloc[0]))
+                if "yd_position" in short_rows.columns:
+                    short_yd_pos = int(float(short_rows["yd_position"].iloc[0]))
 
-            # ★ 新增：提取昨仓(yd_position)和今仓(today_position)
-            # LONG 行优先，没有则取 SHORT 行，都没有则为 0
-            _pos_row = long_rows if not long_rows.empty else short_rows
-            if not _pos_row.empty and "today_position" in _pos_row.columns:
-                today_pos = int(float(_pos_row["today_position"].iloc[0]))
-            else:
-                today_pos = 0
-            if not _pos_row.empty and "yd_position" in _pos_row.columns:
-                yd_pos = int(float(_pos_row["yd_position"].iloc[0]))
-            else:
-                yd_pos = 0
         except Exception as e:
             inst_warnings.append(f"position parsing error: {e}")
             long_pos = short_pos = 0
-            today_pos = yd_pos = 0  # ★ 新增默认值
+            long_today_pos = long_yd_pos = short_today_pos = short_yd_pos = 0
             has_warning = True
-
 
         multiplier = 1.0
         exchange   = ""
@@ -1142,8 +1146,8 @@ def calculate_product(
                         "instrument":        inst,
                         "market_value":      round(inst_market_value_long, 2),
                         "position":          int(long_pos),
-                        "today_position":    today_pos,   # ★ 新增
-                        "yd_position":       yd_pos,      # ★ 新增
+                        "yd_position":       long_yd_pos,
+                        "today_position":    long_today_pos,
                         "risk_position":     risk_pos,
                         "clip":              clip,
                         "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
@@ -1157,7 +1161,6 @@ def calculate_product(
                         "risk_match":        risk_match,
                         "_warnings":         "; ".join(inst_warnings),
                     }
-
                     # ★ 注入8列
                     row_dict.update(inst_trade_stats)
                     detail_rows.append(row_dict)
@@ -1178,8 +1181,8 @@ def calculate_product(
                         "instrument":        inst,
                         "market_value":      round(inst_market_value_short, 2),
                         "position":          -int(short_pos),
-                        "today_position":    today_pos,   # ★ 新增
-                        "yd_position":       yd_pos,      # ★ 新增
+                        "yd_position":       -int(short_yd_pos),
+                        "today_position":    -int(short_today_pos),
                         "risk_position":     risk_pos,
                         "clip":              clip,
                         "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
@@ -1193,7 +1196,6 @@ def calculate_product(
                         "risk_match":        risk_match,
                         "_warnings":         "; ".join(inst_warnings),
                     }
-
                     # ★ 注入8列
                     row_dict.update(inst_trade_stats)
                     detail_rows.append(row_dict)
@@ -1206,8 +1208,8 @@ def calculate_product(
                 "instrument":        inst,
                 "market_value":      0,
                 "position":          0,
-                "today_position":    today_pos,   # ★ 新增
-                "yd_position":       yd_pos,      # ★ 新增
+                "yd_position":       0,
+                "today_position":    0,
                 "risk_position":     risk_pos,
                 "clip":              clip,
                 "uplimit":           int(uplimit_value) if uplimit_value is not None else None,
@@ -1221,7 +1223,6 @@ def calculate_product(
                 "risk_match":        risk_match,
                 "_warnings":         "; ".join(inst_warnings),
             }
-
             # ★ 注入8列
             row_dict.update(inst_trade_stats)
             detail_rows.append(row_dict)
@@ -1648,10 +1649,10 @@ def dashboard():
                         # ★ 修改：display_cols 新增8列
                         display_cols = [
                             "instrument", "market_value",
-                            "position", "today_position", "yd_position",  # ★ 新增两列
-                            "risk_position", "clip", "uplimit",
+                            "position", "yd_position", "today_position", "risk_position", "clip", "uplimit",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin", "exchange", "last_trade_time",
+                            # ★ 新增8列
                             "BuyOpenNumber", "BuyOpenMarketValue",
                             "BuyCloseNumber", "BuyCloseMarketValue",
                             "SellOpenNumber", "SellOpenMarketValue",
@@ -1664,15 +1665,15 @@ def dashboard():
 
                         int_cols = [
                             "market_value", "risk_position",
-                            "today_position", "yd_position",  # ★ 新增
+                            "yd_position", "today_position",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin",
+                            # ★ 新增8列也做整数格式化
                             "BuyOpenNumber", "BuyOpenMarketValue",
                             "BuyCloseNumber", "BuyCloseMarketValue",
                             "SellOpenNumber", "SellOpenMarketValue",
                             "SellCloseNumber", "SellCloseMarketValue",
                         ]
-
                         for col in int_cols:
                             if col in display_ddf.columns:
                                 display_ddf[col] = pd.to_numeric(
@@ -1689,8 +1690,8 @@ def dashboard():
                             "instrument":          "合约名称",
                             "market_value":        "合约市值",
                             "position":            "持仓数量",
-                            "today_position":      "今仓",       # ★ 新增
-                            "yd_position":         "昨仓",       # ★ 新增
+                            "yd_position":         "昨仓",
+                            "today_position":      "今仓",
                             "risk_position":       "目标仓位",
                             "clip":                "Clip",
                             "uplimit":             "Uplimit",
