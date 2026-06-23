@@ -887,14 +887,9 @@ def _check_risk_position_match(
     short_pos: float | None,
     risk_pos: float | None,
 ) -> str:
-    # ★ 修复：当 risk_pos 为 None 时，无法比较 → 返回 "unknown"
-    # （避免所有缺失 risk_position 的合约被误判为 red）
-    if risk_pos is None:
-        return "unknown"
-
     long_int  = int(round(long_pos))  if long_pos  is not None else 0
     short_int = int(round(short_pos)) if short_pos is not None else 0
-    risk_int  = int(round(risk_pos))
+    risk_int  = int(round(risk_pos))  if risk_pos  is not None else 0
     net_pos = long_int - short_int
     if net_pos != risk_int:
         return "red"
@@ -1290,34 +1285,7 @@ def calculate_product(
     except Exception as e:
         warnings_list.append(f"market value ratio calculation error: {e}")
 
-    # ★ 新增：当 detail_rows 为空时，输出一个 NONE 占位行（清仓/无交易场景）
-    if not detail_rows:
-        try:
-            data_date_for_label = data["time"]   # 已经被 get_data_date 设置过
-        except Exception:
-            data_date_for_label = ""
-        detail_rows.append({
-            "instrument":          "—",
-            "market_value":        0,
-            "position":            0,
-            "yd_position":         0,
-            "today_position":      0,
-            "risk_position":       None,
-            "clip":                clip,
-            "uplimit":             None,
-            "position_type":       "NONE",
-            "close_profit":        0.0,
-            "position_profit":     0.0,
-            "total_pnl":           0.0,
-            "instrument_margin":   0.0,
-            "exchange":            "",
-            "last_trade_time":     "",
-            "risk_match":          "matched",
-            "_warnings":           "清仓状态：当前无持仓，且 risk_position 为空" 
-                                if not warnings_list else "; ".join(warnings_list),
-        })
-
-    detail_df = pd.DataFrame(detail_rows)
+    detail_df = pd.DataFrame(detail_rows) if detail_rows else None
 
     detail_status = {
         "has_warning": has_warning,
@@ -1495,7 +1463,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 # DASHBOARD MAIN
 # ─────────────────────────────────────────────
 
- def dashboard():
+def dashboard():
     st.set_page_config(page_title="Futures Monitor Dashboard", layout="wide")
 
     try:
@@ -1570,9 +1538,9 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
                     detail_status = {"has_warning": True, "has_risk": False}
 
                 summary_rows.append(row)
-                # ★ 总是注册到 detail_map，让标题至少能渲染（ddf 为 None 也行）
-                detail_map[cfg["path"]]        = (cfg, detail_df)
-                detail_status_map[cfg["path"]] = detail_status
+                if detail_df is not None:
+                    detail_map[cfg["path"]]        = (cfg, detail_df)
+                    detail_status_map[cfg["path"]] = detail_status
 
                 if market_open:
                     try:
@@ -1594,7 +1562,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
 
             money_cols = [
-                "balance", "pre_balance", "bank", "market_value",
+                "balance", "pre_balance", "bank","market_value",
                 "deposit_withdraw", "cost", "net_return", "init_capital", "margin"
             ]
             for col in money_cols:
@@ -1627,7 +1595,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 
             trade_ratio_cols = [
                 "BOMVRatio",  "BCMVRatio",
-                "SOMVRatio",  "SCMVRatio",
+                "SOMVRatio", "SCMVRatio",
             ]
             for col in trade_ratio_cols:
                 if col in df.columns:
@@ -1636,6 +1604,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
                         .fillna(0)
                         .apply(lambda x: f"{x * 100:.3f}%")
                     )
+
 
             display_df = df.drop(columns=["is_market_open"])
 
@@ -1674,77 +1643,49 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
                 st.markdown("---")
                 st.subheader("🔍 Per-Instrument Detail")
 
-                # ─────────────────────────────────────────────
-                # ★ 重写后的 expander 渲染（修复"多一个表"问题）
-                # ─────────────────────────────────────────────
                 for prod_path, (cfg, ddf) in detail_map.items():
                     market_label  = "CNCF" if cfg["market"] == "commodity" else "CNIF"
                     product_label = cfg["product"]
                     broker_label  = cfg["broker"]
 
-                    status      = detail_status_map.get(
-                        prod_path, {"has_warning": False, "has_risk": False}
-                    )
+                    status      = detail_status_map.get(prod_path, {"has_warning": False, "has_risk": False})
                     has_risk    = status.get("has_risk",    False)
                     has_warning = status.get("has_warning", False)
 
-                    # ★ 判断是否为"清仓占位"（calculate_product 末尾插入的一行 NONE）
-                    is_no_position = (
+                    # ★ 新增：检测清仓状态（detail_rows 为空，但 calculate_product 没 return None）
+                    # 这种情况只会发生在 pd_df 完全为空（header-only 文件）时
+                    is_empty_position = (
                         ddf is not None
-                        and len(ddf) == 1
-                        and ddf.iloc[0].get("position_type") == "NONE"
-                        and ddf.iloc[0].get("instrument") == "—"
+                        and (
+                            len(ddf) == 0
+                            or (
+                                len(ddf) == 1
+                                and ddf.iloc[0].get("position", 0) == 0
+                                and ddf.iloc[0].get("yd_position", 0) == 0
+                                and ddf.iloc[0].get("today_position", 0) == 0
+                                and ddf.iloc[0].get("risk_position") is None
+                            )
+                        )
                     )
 
-                    # ── 标题（颜色逻辑） ─────────────────────
-                    if ddf is None:
-                        title_color = "🟡"
-                        title = (
-                            f"{title_color} [{market_label}] {product_label} | "
-                            f"{broker_label} (数据缺失)"
-                        )
-                    elif is_no_position:
-                        title_color = "🟡"
-                        title = (
-                            f"{title_color} [{market_label}] {product_label} | "
-                            f"{broker_label} (清仓)"
-                        )
-                    elif has_risk:
+                    # ★ 标题颜色（不动原 has_risk/has_warning 逻辑）
+                    if has_risk:
                         title_color = "🔴"
-                        title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
-                    elif has_warning:
+                    elif has_warning or is_empty_position:
                         title_color = "🟡"
-                        title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
                     else:
                         title_color = ""
-                        title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
-                    # ── 只渲染一个 expander ──────────────────
+                    title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
+
                     with st.expander(title, expanded=False):
-
-                        # 情况 1：ddf 是 None（数据文件缺失）
-                        if ddf is None:
-                            st.warning(
-                                "⚠️ 该产品数据文件缺失或解析失败，无法渲染详情。"
-                                "请检查 Overview 表 `warnings` 列。"
-                            )
-                            continue
-
-                        # 情况 2：清仓占位（detail_rows 为空时插入的一行）
-                        if is_no_position:
-                            st.info(
-                                f"📭 **{product_label} 当前为清仓状态**："
-                                "无持仓、无 risk_position 数据。"
-                            )
-                            continue
-
-                        # 情况 3：正常渲染（与原代码一致）
+                        # ★ 修改：display_cols 新增8列
                         display_cols = [
                             "instrument", "market_value",
-                            "position", "yd_position", "today_position",
-                            "risk_position", "clip", "uplimit",
+                            "position", "yd_position", "today_position", "risk_position", "clip", "uplimit",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin", "exchange", "last_trade_time",
+                            # ★ 新增8列
                             "BuyOpenNumber", "BuyOpenMarketValue",
                             "BuyCloseNumber", "BuyCloseMarketValue",
                             "SellOpenNumber", "SellOpenMarketValue",
@@ -1760,6 +1701,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
                             "yd_position", "today_position",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin",
+                            # ★ 新增8列也做整数格式化
                             "BuyOpenNumber", "BuyOpenMarketValue",
                             "BuyCloseNumber", "BuyCloseMarketValue",
                             "SellOpenNumber", "SellOpenMarketValue",
@@ -1773,33 +1715,33 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 
                         if "uplimit" in display_ddf.columns:
                             display_ddf["uplimit"] = display_ddf["uplimit"].apply(
-                                lambda x: f"{float(x):.2f}"
-                                if pd.notna(x) and x is not None else None
+                                lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None
                             )
 
+                        # ★ 修改：col_mapping 新增8列中文名
                         col_mapping = {
-                            "instrument":           "合约名称",
-                            "market_value":         "合约市值",
-                            "position":             "持仓数量",
-                            "yd_position":          "昨仓",
-                            "today_position":       "今仓",
-                            "risk_position":        "目标仓位",
-                            "clip":                 "Clip",
-                            "uplimit":              "Uplimit",
-                            "close_profit":         "平仓盈亏",
-                            "position_profit":      "持仓盈亏",
-                            "total_pnl":            "当日盈亏",
-                            "instrument_margin":    "保证金",
-                            "exchange":             "交易所",
-                            "last_trade_time":      "最后成交时间",
-                            "BuyOpenNumber":        "买开手数",
-                            "BuyOpenMarketValue":   "买开市值",
-                            "BuyCloseNumber":       "买平手数",
-                            "BuyCloseMarketValue":  "买平市值",
-                            "SellOpenNumber":       "卖开手数",
-                            "SellOpenMarketValue":  "卖开市值",
-                            "SellCloseNumber":      "卖平手数",
-                            "SellCloseMarketValue": "卖平市值",
+                            "instrument":          "合约名称",
+                            "market_value":        "合约市值",
+                            "position":            "持仓数量",
+                            "yd_position":         "昨仓",
+                            "today_position":      "今仓",
+                            "risk_position":       "目标仓位",
+                            "clip":                "Clip",
+                            "uplimit":             "Uplimit",
+                            "close_profit":        "平仓盈亏",
+                            "position_profit":     "持仓盈亏",
+                            "total_pnl":           "当日盈亏",
+                            "instrument_margin":   "保证金",
+                            "exchange":            "交易所",
+                            "last_trade_time":     "最后成交时间",
+                            "BuyOpenNumber":       "买开手数",
+                            "BuyOpenMarketValue":  "买开市值",
+                            "BuyCloseNumber":      "买平手数",
+                            "BuyCloseMarketValue": "买平市值",
+                            "SellOpenNumber":      "卖开手数",
+                            "SellOpenMarketValue": "卖开市值",
+                            "SellCloseNumber":     "卖平手数",
+                            "SellCloseMarketValue":"卖平市值",
                         }
 
                         display_ddf = display_ddf.rename(columns=col_mapping)
@@ -1809,19 +1751,10 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
                             if row_idx < len(ddf) and "risk_match" in ddf.columns:
                                 risk_match = ddf.iloc[row_idx].get("risk_match", "matched")
                                 if risk_match == "red":
-                                    # 红色：position 与 risk_position 不匹配
-                                    styles = [
-                                        "background-color: #ff4b4b; color: white; font-weight: bold;"
-                                    ] * len(display_ddf.columns)
-                                elif risk_match == "unknown":
-                                    # 黄色：没有 risk_position 数据，无法判断
-                                    styles = [
-                                        "background-color: #ffd700; color: black;"
-                                    ] * len(display_ddf.columns)
-                                # "matched" → 白色（不染色）
+                                    styles = ["background-color: #ff4b4b; color: white; font-weight: bold;"] * len(display_ddf.columns)
                             return styles
 
-                        # ★ 用闭包默认值避免 Python late-binding 问题
+                        # ★ 修复闭包：使用默认参数绑定 row_styles
                         styled_detail = display_ddf.style
                         for row_idx in range(len(display_ddf)):
                             row_styles = style_risk_match_row(row_idx)
@@ -1832,14 +1765,50 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 
                         st.dataframe(styled_detail, width="stretch")
 
-            time.sleep(1)
+                        # ★★★ 关键：保留原代码的 risk_match 错误 + _warnings 细节展示 ★★★
+                        # 收集所有需要显示的细节
+                        risk_errors = []
+                        warnings_all = []
 
-        except Exception as e:
-            import traceback
-            error_msg = f"⚠️ Loop error: {e}\n\n{traceback.format_exc()}"
+                        for row_idx in range(len(ddf)):
+                            if "risk_match" in ddf.columns:
+                                rm = ddf.iloc[row_idx].get("risk_match", "matched")
+                                if rm == "red":
+                                    inst_name = ddf.iloc[row_idx].get("instrument", "?")
+                                    pos_val   = ddf.iloc[row_idx].get("position", 0)
+                                    risk_val  = ddf.iloc[row_idx].get("risk_position", None)
+                                    risk_errors.append(
+                                        f"  • `{inst_name}`: 持仓={pos_val}, 目标={risk_val}（不匹配）"
+                                    )
+                            if "_warnings" in ddf.columns:
+                                w = ddf.iloc[row_idx].get("_warnings", "")
+                                if w and str(w).strip() and str(w).strip() != "nan":
+                                    inst_name = ddf.iloc[row_idx].get("instrument", "?")
+                                    warnings_all.append(f"  • `{inst_name}`: {w}")
+
+                        if risk_errors:
+                            st.markdown("**🔴 Risk Position Mismatch（实际持仓 ≠ 目标持仓）:**")
+                            st.markdown("\n".join(risk_errors))
+
+                        if warnings_all:
+                            st.markdown("**🟡 Instrument Warnings:**")
+                            st.markdown("\n".join(warnings_all))
+
+                        # ★ 新增：清仓状态的友好提示（仅在表格下方，不影响上面的渲染）
+                        if is_empty_position:
+                            st.info(
+                                f"📭 **{product_label} 当前为清仓状态**："
+                                f"无持仓、无 risk_position 数据。"
+                            )
+
+        except Exception as outer_err:
             with placeholder.container():
-                st.error(error_msg)
-            time.sleep(5)
+                st.error(f"❌ Dashboard loop error: {outer_err}")
+                import traceback
+                st.error(traceback.format_exc())
+
+        time.sleep(10)
+
 
 if __name__ == "__main__":
     dashboard()
