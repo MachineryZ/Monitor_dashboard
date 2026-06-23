@@ -1285,7 +1285,34 @@ def calculate_product(
     except Exception as e:
         warnings_list.append(f"market value ratio calculation error: {e}")
 
-    detail_df = pd.DataFrame(detail_rows) if detail_rows else None
+    # ★ 新增：当 detail_rows 为空时，输出一个 NONE 占位行（清仓/无交易场景）
+    if not detail_rows:
+        try:
+            data_date_for_label = data["time"]   # 已经被 get_data_date 设置过
+        except Exception:
+            data_date_for_label = ""
+        detail_rows.append({
+            "instrument":          "—",
+            "market_value":        0,
+            "position":            0,
+            "yd_position":         0,
+            "today_position":      0,
+            "risk_position":       None,
+            "clip":                clip,
+            "uplimit":             None,
+            "position_type":       "NONE",
+            "close_profit":        0.0,
+            "position_profit":     0.0,
+            "total_pnl":           0.0,
+            "instrument_margin":   0.0,
+            "exchange":            "",
+            "last_trade_time":     "",
+            "risk_match":          "matched",
+            "_warnings":           "清仓状态：当前无持仓，且 risk_position 为空" 
+                                if not warnings_list else "; ".join(warnings_list),
+        })
+
+    detail_df = pd.DataFrame(detail_rows)
 
     detail_status = {
         "has_warning": has_warning,
@@ -1538,9 +1565,14 @@ def dashboard():
                     detail_status = {"has_warning": True, "has_risk": False}
 
                 summary_rows.append(row)
+                # 原代码：
                 if detail_df is not None:
                     detail_map[cfg["path"]]        = (cfg, detail_df)
                     detail_status_map[cfg["path"]] = detail_status
+
+                # 改为（无论 detail_df 是不是 None，都注册到 detail_map，让标题至少能渲染）：
+                detail_map[cfg["path"]]        = (cfg, detail_df)
+                detail_status_map[cfg["path"]] = detail_status
 
                 if market_open:
                     try:
@@ -1652,14 +1684,48 @@ def dashboard():
                     has_risk    = status.get("has_risk",    False)
                     has_warning = status.get("has_warning", False)
 
-                    if has_risk:
+                    # ★ 新增：判断是否为"数据缺失"或"全空清仓"
+                    is_no_data = ddf is None or (
+                        len(ddf) == 1 and ddf.iloc[0].get("position_type") == "NONE"
+                        and ddf.iloc[0].get("instrument") == "—"
+                    )
+
+                    if is_no_data:
+                        title_color = "🟡"
+                        title = f"{title_color} [{market_label}] {product_label} | {broker_label} (无数据)"
+                    elif has_risk:
                         title_color = "🔴"
+                        title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
                     elif has_warning:
                         title_color = "🟡"
+                        title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
                     else:
                         title_color = ""
+                        title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
-                    title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
+                    with st.expander(title, expanded=False):
+                        if ddf is None:
+                            # ★ 数据缺失（account_info / position_data 读不到）
+                            st.warning(
+                                f"⚠️ 该产品数据文件缺失或解析失败，无法渲染详情。"
+                                f"请检查 Overview 表 `warnings` 列。"
+                            )
+                            continue
+
+                        # ★ 全空清仓的特殊展示
+                        if is_no_data:
+                            st.info(
+                                f"📭 **{product_label} 当前为清仓状态**：无持仓、无 risk_position。"
+                                f"\n\n数据来源文件可能尚未生成（account_info / position_data / trade_data）。"
+                            )
+                            # 仍然渲染一行 NONE 占位（可选，下面这段正常渲染逻辑会跑）
+                            # 也可以选择直接 continue 把这行也省掉，保留提示更清晰
+                            continue
+
+                        # ─── 下面是原有的渲染逻辑，保持不变 ───
+                        display_cols = [...]
+                        display_ddf = ddf[[c for c in display_cols if c in ddf.columns]].copy()
+                        ...
 
                     with st.expander(title, expanded=False):
                         # ★ 修改：display_cols 新增8列
