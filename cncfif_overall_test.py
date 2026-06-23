@@ -83,7 +83,7 @@ PRODUCT_CONFIGS = [
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
-        "broker":       "zx",
+        "broker":       "dz",
         "product":      "zz1h",
         "market":       "commodity",
         "init_capital": 0,
