@@ -919,6 +919,10 @@ def calculate_product(
     data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
     data["is_market_open"] = market_open
 
+    # ★ 新增：标记 position_data 是否为空（清仓状态）
+    is_position_empty = False
+    data["is_position_empty"] = False
+
     data_date, time_suffix = get_data_date(market, path, current_date, market_open)
     data["time"] += time_suffix
 
@@ -987,6 +991,9 @@ def calculate_product(
             "instrument_id", "pos_type", "position",
             "position_profit", "close_profit", "pre_settlement_price",
         ])
+        # ★ 新增：标记 position_data 为空（清仓状态）
+        is_position_empty = True
+        data["is_position_empty"] = True
 
     try:
         abs_return = float(
@@ -1030,6 +1037,10 @@ def calculate_product(
     detail_rows: list[dict] = []
     has_warning = False
     has_risk = False
+
+    # ★ 新增：如果 position_data 为空，强制标记为 warning（黄色圈圈 🟡）
+    if is_position_empty:
+        has_warning = True
 
     instruments = (
         pd_df["instrument_id"].dropna().unique().tolist()
@@ -1286,6 +1297,22 @@ def calculate_product(
         warnings_list.append(f"market value ratio calculation error: {e}")
 
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
+
+    # ★ 新增：当 position_data 为空时，仍然返回一个空的 detail_df
+    # 这样 dashboard 中仍然会显示这个产品的 detail section（标记为黄色+清仓）
+    if is_position_empty:
+        empty_detail_df = pd.DataFrame(columns=[
+            "instrument", "market_value", "position", "yd_position", "today_position",
+            "risk_position", "clip", "uplimit", "position_type", "close_profit",
+            "position_profit", "total_pnl", "instrument_margin", "exchange",
+            "last_trade_time", "risk_match", "_warnings",
+            "BuyOpenNumber", "BuyOpenMarketValue",
+            "BuyCloseNumber", "BuyCloseMarketValue",
+            "SellOpenNumber", "SellOpenMarketValue",
+            "SellCloseNumber", "SellCloseMarketValue",
+        ])
+        detail_df = empty_detail_df
+
 
     detail_status = {
         "has_warning": has_warning,
@@ -1652,31 +1679,16 @@ def dashboard():
                     has_risk    = status.get("has_risk",    False)
                     has_warning = status.get("has_warning", False)
 
-                    # ★ 新增：检测清仓状态（detail_rows 为空，但 calculate_product 没 return None）
-                    # 这种情况只会发生在 pd_df 完全为空（header-only 文件）时
-                    is_empty_position = (
-                        ddf is not None
-                        and (
-                            len(ddf) == 0
-                            or (
-                                len(ddf) == 1
-                                and ddf.iloc[0].get("position", 0) == 0
-                                and ddf.iloc[0].get("yd_position", 0) == 0
-                                and ddf.iloc[0].get("today_position", 0) == 0
-                                and ddf.iloc[0].get("risk_position") is None
-                            )
-                        )
-                    )
-
-                    # ★ 标题颜色（不动原 has_risk/has_warning 逻辑）
                     if has_risk:
                         title_color = "🔴"
-                    elif has_warning or is_empty_position:
+                    elif has_warning:
                         title_color = "🟡"
                     else:
                         title_color = ""
 
                     title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
+                    if ddf is not None and ddf.empty:
+                        title += " (清仓)"
 
                     with st.expander(title, expanded=False):
                         # ★ 修改：display_cols 新增8列
@@ -1754,52 +1766,49 @@ def dashboard():
                                     styles = ["background-color: #ff4b4b; color: white; font-weight: bold;"] * len(display_ddf.columns)
                             return styles
 
-                        # ★ 修复闭包：使用默认参数绑定 row_styles
                         styled_detail = display_ddf.style
                         for row_idx in range(len(display_ddf)):
                             row_styles = style_risk_match_row(row_idx)
                             if any(row_styles):
-                                styled_detail = styled_detail.apply(
-                                    lambda _, _r=row_styles: _r, axis=1
-                                )
+                                for col_idx, (col_name, style) in enumerate(zip(display_ddf.columns, row_styles)):
+                                    if style:
+                                        styled_detail = styled_detail.map(
+                                            lambda x, s=style: s,
+                                            subset=pd.IndexSlice[[row_idx], col_name]
+                                        )
 
                         st.dataframe(styled_detail, width="stretch")
 
-                        # ★★★ 关键：保留原代码的 risk_match 错误 + _warnings 细节展示 ★★★
-                        # 收集所有需要显示的细节
-                        risk_errors = []
-                        warnings_all = []
-
-                        for row_idx in range(len(ddf)):
-                            if "risk_match" in ddf.columns:
-                                rm = ddf.iloc[row_idx].get("risk_match", "matched")
-                                if rm == "red":
-                                    inst_name = ddf.iloc[row_idx].get("instrument", "?")
-                                    pos_val   = ddf.iloc[row_idx].get("position", 0)
-                                    risk_val  = ddf.iloc[row_idx].get("risk_position", None)
-                                    risk_errors.append(
-                                        f"  • `{inst_name}`: 持仓={pos_val}, 目标={risk_val}（不匹配）"
+                        if "risk_match" in ddf.columns and "instrument" in ddf.columns:
+                            risk_red_rows = ddf[ddf["risk_match"] == "red"]
+                            if not risk_red_rows.empty:
+                                st.error("🔴 **Instrument Risk Errors (Position Mismatch):**")
+                                for _, rr in risk_red_rows.iterrows():
+                                    inst_name  = rr["instrument"]
+                                    pos_type   = rr.get("position_type", "")
+                                    actual_pos = rr.get("position", 0)
+                                    risk_pos   = rr.get("risk_position", None)
+                                    if risk_pos is None:
+                                        risk_pos = 0
+                                    elif math.isnan(risk_pos):
+                                        risk_pos = 0
+                                    risk_pos_display = int(round(risk_pos)) if (risk_pos is not None) else 0
+                                    st.markdown(
+                                        f"- **{inst_name}** ({pos_type}): "
+                                        f"实际持仓 = `{actual_pos}`, "
+                                        f"目标仓位 = `{risk_pos_display}` "
+                                        f"→ 净仓位与目标仓位不一致"
                                     )
-                            if "_warnings" in ddf.columns:
-                                w = ddf.iloc[row_idx].get("_warnings", "")
-                                if w and str(w).strip() and str(w).strip() != "nan":
-                                    inst_name = ddf.iloc[row_idx].get("instrument", "?")
-                                    warnings_all.append(f"  • `{inst_name}`: {w}")
 
-                        if risk_errors:
-                            st.markdown("**🔴 Risk Position Mismatch（实际持仓 ≠ 目标持仓）:**")
-                            st.markdown("\n".join(risk_errors))
+                        if "_warnings" in ddf.columns:
+                            inst_warns = ddf[ddf["_warnings"].str.len() > 0]
+                            if not inst_warns.empty:
+                                st.warning("⚠️ **Instrument Warnings:**")
+                                for idx, wr in inst_warns.iterrows():
+                                    st.markdown(
+                                        f"- **{wr['instrument']}**: {wr['_warnings']}"
+                                    )
 
-                        if warnings_all:
-                            st.markdown("**🟡 Instrument Warnings:**")
-                            st.markdown("\n".join(warnings_all))
-
-                        # ★ 新增：清仓状态的友好提示（仅在表格下方，不影响上面的渲染）
-                        if is_empty_position:
-                            st.info(
-                                f"📭 **{product_label} 当前为清仓状态**："
-                                f"无持仓、无 risk_position 数据。"
-                            )
 
         except Exception as outer_err:
             with placeholder.container():
