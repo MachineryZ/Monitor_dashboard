@@ -1490,7 +1490,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 # DASHBOARD MAIN
 # ─────────────────────────────────────────────
 
-def dashboard():
+ def dashboard():
     st.set_page_config(page_title="Futures Monitor Dashboard", layout="wide")
 
     try:
@@ -1565,12 +1565,7 @@ def dashboard():
                     detail_status = {"has_warning": True, "has_risk": False}
 
                 summary_rows.append(row)
-                # 原代码：
-                if detail_df is not None:
-                    detail_map[cfg["path"]]        = (cfg, detail_df)
-                    detail_status_map[cfg["path"]] = detail_status
-
-                # 改为（无论 detail_df 是不是 None，都注册到 detail_map，让标题至少能渲染）：
+                # ★ 总是注册到 detail_map，让标题至少能渲染（ddf 为 None 也行）
                 detail_map[cfg["path"]]        = (cfg, detail_df)
                 detail_status_map[cfg["path"]] = detail_status
 
@@ -1594,7 +1589,7 @@ def dashboard():
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
 
             money_cols = [
-                "balance", "pre_balance", "bank","market_value",
+                "balance", "pre_balance", "bank", "market_value",
                 "deposit_withdraw", "cost", "net_return", "init_capital", "margin"
             ]
             for col in money_cols:
@@ -1627,7 +1622,7 @@ def dashboard():
 
             trade_ratio_cols = [
                 "BOMVRatio",  "BCMVRatio",
-                "SOMVRatio", "SCMVRatio",
+                "SOMVRatio",  "SCMVRatio",
             ]
             for col in trade_ratio_cols:
                 if col in df.columns:
@@ -1636,7 +1631,6 @@ def dashboard():
                         .fillna(0)
                         .apply(lambda x: f"{x * 100:.3f}%")
                     )
-
 
             display_df = df.drop(columns=["is_market_open"])
 
@@ -1675,24 +1669,41 @@ def dashboard():
                 st.markdown("---")
                 st.subheader("🔍 Per-Instrument Detail")
 
+                # ─────────────────────────────────────────────
+                # ★ 重写后的 expander 渲染（修复"多一个表"问题）
+                # ─────────────────────────────────────────────
                 for prod_path, (cfg, ddf) in detail_map.items():
                     market_label  = "CNCF" if cfg["market"] == "commodity" else "CNIF"
                     product_label = cfg["product"]
                     broker_label  = cfg["broker"]
 
-                    status      = detail_status_map.get(prod_path, {"has_warning": False, "has_risk": False})
+                    status      = detail_status_map.get(
+                        prod_path, {"has_warning": False, "has_risk": False}
+                    )
                     has_risk    = status.get("has_risk",    False)
                     has_warning = status.get("has_warning", False)
 
-                    # ★ 新增：判断是否为"数据缺失"或"全空清仓"
-                    is_no_data = ddf is None or (
-                        len(ddf) == 1 and ddf.iloc[0].get("position_type") == "NONE"
+                    # ★ 判断是否为"清仓占位"（calculate_product 末尾插入的一行 NONE）
+                    is_no_position = (
+                        ddf is not None
+                        and len(ddf) == 1
+                        and ddf.iloc[0].get("position_type") == "NONE"
                         and ddf.iloc[0].get("instrument") == "—"
                     )
 
-                    if is_no_data:
+                    # ── 标题（颜色逻辑） ─────────────────────
+                    if ddf is None:
                         title_color = "🟡"
-                        title = f"{title_color} [{market_label}] {product_label} | {broker_label} (无数据)"
+                        title = (
+                            f"{title_color} [{market_label}] {product_label} | "
+                            f"{broker_label} (数据缺失)"
+                        )
+                    elif is_no_position:
+                        title_color = "🟡"
+                        title = (
+                            f"{title_color} [{market_label}] {product_label} | "
+                            f"{broker_label} (清仓)"
+                        )
                     elif has_risk:
                         title_color = "🔴"
                         title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
@@ -1703,38 +1714,32 @@ def dashboard():
                         title_color = ""
                         title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
 
+                    # ── 只渲染一个 expander ──────────────────
                     with st.expander(title, expanded=False):
+
+                        # 情况 1：ddf 是 None（数据文件缺失）
                         if ddf is None:
-                            # ★ 数据缺失（account_info / position_data 读不到）
                             st.warning(
-                                f"⚠️ 该产品数据文件缺失或解析失败，无法渲染详情。"
-                                f"请检查 Overview 表 `warnings` 列。"
+                                "⚠️ 该产品数据文件缺失或解析失败，无法渲染详情。"
+                                "请检查 Overview 表 `warnings` 列。"
                             )
                             continue
 
-                        # ★ 全空清仓的特殊展示
-                        if is_no_data:
+                        # 情况 2：清仓占位（detail_rows 为空时插入的一行）
+                        if is_no_position:
                             st.info(
-                                f"📭 **{product_label} 当前为清仓状态**：无持仓、无 risk_position。"
-                                f"\n\n数据来源文件可能尚未生成（account_info / position_data / trade_data）。"
+                                f"📭 **{product_label} 当前为清仓状态**："
+                                "无持仓、无 risk_position 数据。"
                             )
-                            # 仍然渲染一行 NONE 占位（可选，下面这段正常渲染逻辑会跑）
-                            # 也可以选择直接 continue 把这行也省掉，保留提示更清晰
                             continue
 
-                        # ─── 下面是原有的渲染逻辑，保持不变 ───
-                        display_cols = [...]
-                        display_ddf = ddf[[c for c in display_cols if c in ddf.columns]].copy()
-                        ...
-
-                    with st.expander(title, expanded=False):
-                        # ★ 修改：display_cols 新增8列
+                        # 情况 3：正常渲染（与原代码一致）
                         display_cols = [
                             "instrument", "market_value",
-                            "position", "yd_position", "today_position", "risk_position", "clip", "uplimit",
+                            "position", "yd_position", "today_position",
+                            "risk_position", "clip", "uplimit",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin", "exchange", "last_trade_time",
-                            # ★ 新增8列
                             "BuyOpenNumber", "BuyOpenMarketValue",
                             "BuyCloseNumber", "BuyCloseMarketValue",
                             "SellOpenNumber", "SellOpenMarketValue",
@@ -1750,7 +1755,6 @@ def dashboard():
                             "yd_position", "today_position",
                             "close_profit", "position_profit", "total_pnl",
                             "instrument_margin",
-                            # ★ 新增8列也做整数格式化
                             "BuyOpenNumber", "BuyOpenMarketValue",
                             "BuyCloseNumber", "BuyCloseMarketValue",
                             "SellOpenNumber", "SellOpenMarketValue",
@@ -1764,33 +1768,33 @@ def dashboard():
 
                         if "uplimit" in display_ddf.columns:
                             display_ddf["uplimit"] = display_ddf["uplimit"].apply(
-                                lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None
+                                lambda x: f"{float(x):.2f}"
+                                if pd.notna(x) and x is not None else None
                             )
 
-                        # ★ 修改：col_mapping 新增8列中文名
                         col_mapping = {
-                            "instrument":          "合约名称",
-                            "market_value":        "合约市值",
-                            "position":            "持仓数量",
-                            "yd_position":         "昨仓",
-                            "today_position":      "今仓",
-                            "risk_position":       "目标仓位",
-                            "clip":                "Clip",
-                            "uplimit":             "Uplimit",
-                            "close_profit":        "平仓盈亏",
-                            "position_profit":     "持仓盈亏",
-                            "total_pnl":           "当日盈亏",
-                            "instrument_margin":   "保证金",
-                            "exchange":            "交易所",
-                            "last_trade_time":     "最后成交时间",
-                            "BuyOpenNumber":       "买开手数",
-                            "BuyOpenMarketValue":  "买开市值",
-                            "BuyCloseNumber":      "买平手数",
-                            "BuyCloseMarketValue": "买平市值",
-                            "SellOpenNumber":      "卖开手数",
-                            "SellOpenMarketValue": "卖开市值",
-                            "SellCloseNumber":     "卖平手数",
-                            "SellCloseMarketValue":"卖平市值",
+                            "instrument":           "合约名称",
+                            "market_value":         "合约市值",
+                            "position":             "持仓数量",
+                            "yd_position":          "昨仓",
+                            "today_position":       "今仓",
+                            "risk_position":        "目标仓位",
+                            "clip":                 "Clip",
+                            "uplimit":              "Uplimit",
+                            "close_profit":         "平仓盈亏",
+                            "position_profit":      "持仓盈亏",
+                            "total_pnl":            "当日盈亏",
+                            "instrument_margin":    "保证金",
+                            "exchange":             "交易所",
+                            "last_trade_time":      "最后成交时间",
+                            "BuyOpenNumber":        "买开手数",
+                            "BuyOpenMarketValue":   "买开市值",
+                            "BuyCloseNumber":       "买平手数",
+                            "BuyCloseMarketValue":  "买平市值",
+                            "SellOpenNumber":       "卖开手数",
+                            "SellOpenMarketValue":  "卖开市值",
+                            "SellCloseNumber":      "卖平手数",
+                            "SellCloseMarketValue": "卖平市值",
                         }
 
                         display_ddf = display_ddf.rename(columns=col_mapping)
@@ -1800,61 +1804,31 @@ def dashboard():
                             if row_idx < len(ddf) and "risk_match" in ddf.columns:
                                 risk_match = ddf.iloc[row_idx].get("risk_match", "matched")
                                 if risk_match == "red":
-                                    styles = ["background-color: #ff4b4b; color: white; font-weight: bold;"] * len(display_ddf.columns)
+                                    styles = [
+                                        "background-color: #ff4b4b; color: white; "
+                                        "font-weight: bold;"
+                                    ] * len(display_ddf.columns)
                             return styles
 
+                        # ★ 用闭包默认值避免 Python late-binding 问题
                         styled_detail = display_ddf.style
                         for row_idx in range(len(display_ddf)):
                             row_styles = style_risk_match_row(row_idx)
                             if any(row_styles):
-                                for col_idx, (col_name, style) in enumerate(zip(display_ddf.columns, row_styles)):
-                                    if style:
-                                        styled_detail = styled_detail.map(
-                                            lambda x, s=style: s,
-                                            subset=pd.IndexSlice[[row_idx], col_name]
-                                        )
+                                styled_detail = styled_detail.apply(
+                                    lambda _, _r=row_styles: _r, axis=1
+                                )
 
                         st.dataframe(styled_detail, width="stretch")
 
-                        if "risk_match" in ddf.columns and "instrument" in ddf.columns:
-                            risk_red_rows = ddf[ddf["risk_match"] == "red"]
-                            if not risk_red_rows.empty:
-                                st.error("🔴 **Instrument Risk Errors (Position Mismatch):**")
-                                for _, rr in risk_red_rows.iterrows():
-                                    inst_name  = rr["instrument"]
-                                    pos_type   = rr.get("position_type", "")
-                                    actual_pos = rr.get("position", 0)
-                                    risk_pos   = rr.get("risk_position", None)
-                                    if risk_pos is None:
-                                        risk_pos = 0
-                                    elif math.isnan(risk_pos):
-                                        risk_pos = 0
-                                    risk_pos_display = int(round(risk_pos)) if (risk_pos is not None) else 0
-                                    st.markdown(
-                                        f"- **{inst_name}** ({pos_type}): "
-                                        f"实际持仓 = `{actual_pos}`, "
-                                        f"目标仓位 = `{risk_pos_display}` "
-                                        f"→ 净仓位与目标仓位不一致"
-                                    )
+            time.sleep(1)
 
-                        if "_warnings" in ddf.columns:
-                            inst_warns = ddf[ddf["_warnings"].str.len() > 0]
-                            if not inst_warns.empty:
-                                st.warning("⚠️ **Instrument Warnings:**")
-                                for idx, wr in inst_warns.iterrows():
-                                    st.markdown(
-                                        f"- **{wr['instrument']}**: {wr['_warnings']}"
-                                    )
-
-
-        except Exception as outer_err:
+        except Exception as e:
+            import traceback
+            error_msg = f"⚠️ Loop error: {e}\n\n{traceback.format_exc()}"
             with placeholder.container():
-                st.error(f"❌ Dashboard loop error: {outer_err}")
-                import traceback
-                st.error(traceback.format_exc())
-
-        time.sleep(10)
-
+                st.error(error_msg)
+            time.sleep(5)
 
 if __name__ == "__main__":
     dashboard()
