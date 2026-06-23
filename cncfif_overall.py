@@ -887,9 +887,14 @@ def _check_risk_position_match(
     short_pos: float | None,
     risk_pos: float | None,
 ) -> str:
+    # ★ 修复：当 risk_pos 为 None 时，无法比较 → 返回 "unknown"
+    # （避免所有缺失 risk_position 的合约被误判为 red）
+    if risk_pos is None:
+        return "unknown"
+
     long_int  = int(round(long_pos))  if long_pos  is not None else 0
     short_int = int(round(short_pos)) if short_pos is not None else 0
-    risk_int  = int(round(risk_pos))  if risk_pos  is not None else 0
+    risk_int  = int(round(risk_pos))
     net_pos = long_int - short_int
     if net_pos != risk_int:
         return "red"
@@ -1804,10 +1809,16 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
                             if row_idx < len(ddf) and "risk_match" in ddf.columns:
                                 risk_match = ddf.iloc[row_idx].get("risk_match", "matched")
                                 if risk_match == "red":
+                                    # 红色：position 与 risk_position 不匹配
                                     styles = [
-                                        "background-color: #ff4b4b; color: white; "
-                                        "font-weight: bold;"
+                                        "background-color: #ff4b4b; color: white; font-weight: bold;"
                                     ] * len(display_ddf.columns)
+                                elif risk_match == "unknown":
+                                    # 黄色：没有 risk_position 数据，无法判断
+                                    styles = [
+                                        "background-color: #ffd700; color: black;"
+                                    ] * len(display_ddf.columns)
+                                # "matched" → 白色（不染色）
                             return styles
 
                         # ★ 用闭包默认值避免 Python late-binding 问题
