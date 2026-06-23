@@ -20,13 +20,13 @@ RWP_CREDENTIALS = {
 # ── 产品与银行账户映射 ────────────────────────────────
 # 产品路径 → (fund_id, unit_id)
 PRODUCT_BANK_MAPPING = {
-    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian": (58, 230),  # 山海CTA进取1号
-    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":   (569, 9118),  # 山海CTA平衡1号
-    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx": (568, 9122),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":           (215, 1049),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":           (319, 1604),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (34, 216),  # 可按需配置
-    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (215, 1049),  # 可按需配置
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian": (58, 230),  # 八卦田（安心1号），不正常
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":   (569, 9118),  # 山海CTA平衡1号， 正常
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx": (568, 9122),  # 进取， 正常
+    "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":           (215, 1049),  # zz1h 不正常
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":           (319, 1604),  # 可按需配置， 不正常
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (34, 216),  # 可按需配置，不正常
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (215, 1049),  # 可按需配置，不正常
 }
 
 _rwp_api_cache: dict[str, float] = {}  # 缓存银行账户余额
@@ -166,24 +166,40 @@ def get_bank_account_balance(path: str) -> float | None:
     try:
         fund_id, unit_id = PRODUCT_BANK_MAPPING[path]
         today_date = datetime.datetime.now().strftime("%Y%m%d")
-        # 构建请求
-        req_text = {
-            "fund_id": fund_id,
-            "unit_id": unit_id,
-            "start_date": today_date
-        }
-        req_json = json.dumps(req_text)
-        
-        # 调用 API
-        resp = rwp_api.get_unit_asset_chart(req_json)
-        
-        # 提取银行账户余额
-        bank_account = resp['unit_list'][0]['nav_list'][0]['total_asset']
-        bank_account = float(bank_account)
-        
-        # 缓存结果
-        _rwp_api_cache[cache_key] = bank_account
-        
+        if fund_id == 569 or fund_id == 568:
+            # 构建请求
+            req_text = {
+                "fund_id": fund_id,
+                "unit_id": unit_id,
+                "start_date": today_date
+            }
+            req_json = json.dumps(req_text)
+            
+            # 调用 API
+            resp = rwp_api.get_unit_asset_chart(req_json)
+            
+            # 提取银行账户余额
+            bank_account = resp['unit_list'][0]['nav_list'][0]['total_asset']
+            bank_account = float(bank_account)
+            
+            # 缓存结果
+            _rwp_api_cache[cache_key] = bank_account
+        elif fund_id == 58:
+            bank_account = 7908.77
+            _rwp_api_cache[cache_key] = bank_account
+        elif fund_id == 215:
+            bank_account = 11143.03
+            _rwp_api_cache[cache_key] = bank_account
+        elif fund_id == 319:
+            bank_account = 49458.62
+            _rwp_api_cache[cache_key] = bank_account
+        elif fund_id == 34:
+            bank_account = 60024.74
+            _rwp_api_cache[cache_key] = bank_account
+        elif fund_id == 215:
+            bank_account = 11143.03
+            _rwp_api_cache[cache_key] = bank_account
+            
         return bank_account
     
     except KeyError as e:
