@@ -1601,18 +1601,6 @@ def dashboard():
                         pass
 
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
-            def _build_low_limit_reason(row: pd.Series) -> str:
-                try:
-                    pll = float(row["product_low_limit"])
-                    if pll < 0.8:
-                        if row.get("product", "").split(" ")[0] == "ly1h":  # 防止已经有后缀时误判
-                            return " (流动性不足-ly1h)"
-                        return " (流动性不足)"
-                except (ValueError, TypeError):
-                    pass
-                return ""
-
-            df["product"] = df["product"].astype(str) + df.apply(_build_low_limit_reason, axis=1)
 
             money_cols = [
                 "balance", "pre_balance", "bank","market_value",
@@ -1694,7 +1682,41 @@ def dashboard():
                 display_overview_with_tooltips(styled_df)
 
                 st.markdown("---")
+                st.subheader("📈 Overview")
+                display_overview_with_tooltips(styled_df)
+
+                # ★ 新增：Overview 下方显示 product_low_limit 错误汇总（参考 Instrument Risk Errors 样式）
+                _low_limit_errors = []
+                for _r in summary_rows:
+                    try:
+                        _pll = float(_r["product_low_limit"])
+                        if _pll < 0.8:
+                            _is_ly1h = _r.get("product") == "ly1h"
+                            _low_limit_errors.append({
+                                "product":          _r.get("product", ""),
+                                "market":           _r.get("market", ""),
+                                "broker":           _r.get("broker", ""),
+                                "product_low_limit": f"{_pll:.4f}",
+                                "warnings":         _r.get("warnings", ""),
+                                "reason":           "流动性不足-ly1h" if _is_ly1h else "流动性不足",
+                            })
+                    except (ValueError, TypeError):
+                        pass
+
+                if _low_limit_errors:
+                    _err_df = pd.DataFrame(_low_limit_errors)
+                    with st.expander(
+                        f"⚠️ Product Low Limit Errors ({len(_low_limit_errors)})",
+                        expanded=False,
+                    ):
+                        st.markdown("##### ⚠️ Product Low Limit Errors (流动性不足)")
+                        st.dataframe(_err_df, width="stretch", hide_index=True)
+                        st.caption("product_low_limit < 0.8（ly1h 例外，仅标记为黄色）")
+
+                # ★★★ 在下面这一行之前插入 ★★★
+                st.markdown("---")
                 st.subheader("🔍 Per-Instrument Detail")
+
 
                 for prod_path, (cfg, ddf) in detail_map.items():
                     market_label  = "CNCF" if cfg["market"] == "commodity" else "CNIF"
