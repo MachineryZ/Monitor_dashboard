@@ -469,9 +469,17 @@ def get_data_date(
 # ─────────────────────────────────────────────
 
 def get_margin_file_path(path: str, market: str, data_date: int) -> str:
-    if market == "commodity":
-        return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
+    # if market == "commodity":
+    #     return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     mapping = {
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_gaguatian":
+            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_gaguatian_{data_date}.csv",
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":
+            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx":
+            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":
+            f"/cpfs/rawdata/cncf_all_nedd_before_opn/margin_uplimit_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":
             f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":

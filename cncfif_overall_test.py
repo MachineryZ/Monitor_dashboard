@@ -469,9 +469,15 @@ def get_data_date(
 # ─────────────────────────────────────────────
 
 def get_margin_file_path(path: str, market: str, data_date: int) -> str:
-    if market == "commodity":
-        return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     mapping = {
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_gaguatian":
+            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_gaguatian_{data_date}.csv",
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":
+            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx":
+            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":
+            f"/cpfs/rawdata/cncf_all_nedd_before_opn/margin_uplimit_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":
             f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":
@@ -919,6 +925,10 @@ def calculate_product(
     data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
     data["is_market_open"] = market_open
 
+    # ★ 新增：标记 position_data 是否为空（清仓状态）
+    is_position_empty = False
+    data["is_position_empty"] = False
+
     data_date, time_suffix = get_data_date(market, path, current_date, market_open)
     data["time"] += time_suffix
 
@@ -987,6 +997,9 @@ def calculate_product(
             "instrument_id", "pos_type", "position",
             "position_profit", "close_profit", "pre_settlement_price",
         ])
+        # ★ 新增：标记 position_data 为空（清仓状态）
+        is_position_empty = True
+        data["is_position_empty"] = True
 
     try:
         abs_return = float(
@@ -1030,6 +1043,10 @@ def calculate_product(
     detail_rows: list[dict] = []
     has_warning = False
     has_risk = False
+
+    # ★ 新增：如果 position_data 为空，强制标记为 warning（黄色圈圈 🟡）
+    if is_position_empty:
+        has_warning = True
 
     instruments = (
         pd_df["instrument_id"].dropna().unique().tolist()
@@ -1286,6 +1303,22 @@ def calculate_product(
         warnings_list.append(f"market value ratio calculation error: {e}")
 
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
+
+    # ★ 新增：当 position_data 为空时，仍然返回一个空的 detail_df
+    # 这样 dashboard 中仍然会显示这个产品的 detail section（标记为黄色+清仓）
+    if is_position_empty:
+        empty_detail_df = pd.DataFrame(columns=[
+            "instrument", "market_value", "position", "yd_position", "today_position",
+            "risk_position", "clip", "uplimit", "position_type", "close_profit",
+            "position_profit", "total_pnl", "instrument_margin", "exchange",
+            "last_trade_time", "risk_match", "_warnings",
+            "BuyOpenNumber", "BuyOpenMarketValue",
+            "BuyCloseNumber", "BuyCloseMarketValue",
+            "SellOpenNumber", "SellOpenMarketValue",
+            "SellCloseNumber", "SellCloseMarketValue",
+        ])
+        detail_df = empty_detail_df
+
 
     detail_status = {
         "has_warning": has_warning,
@@ -1660,6 +1693,8 @@ def dashboard():
                         title_color = ""
 
                     title = f"{title_color} [{market_label}] {product_label} | {broker_label}"
+                    if ddf is not None and ddf.empty:
+                        title += " (清仓)"
 
                     with st.expander(title, expanded=False):
                         # ★ 修改：display_cols 新增8列
