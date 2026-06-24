@@ -288,8 +288,16 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
 # 修复：从CSV读取 uplimit_holding_position
 # ─────────────────────────────────────────────
 
-def load_uplimit_holding_position() -> dict[str, float] | None:
-    csv_path = "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
+def load_uplimit_holding_position(path: str, market: str, data_date: int) -> dict[str, float] | None:
+    """
+    根据产品路径 + 日期，读取对应的 uplimit_holding_position CSV。
+    复用 get_margin_file_path 的 mapping（文件就是同一个，只是读不同字段）。
+    返回 {instrument: up_limit_holding_position}。
+    """
+    csv_path = get_margin_file_path(path, market, data_date)
+    if not csv_path:
+        return None
+    
     uplimit_data = {}
     try:
         df, err = safe_read_csv(csv_path)
@@ -297,7 +305,6 @@ def load_uplimit_holding_position() -> dict[str, float] | None:
             return None
         if "instrument" not in df.columns or "up_limit_holding_position" not in df.columns:
             return None
-        loaded_count = 0
         for idx, row in df.iterrows():
             try:
                 inst = str(row["instrument"]).strip()
@@ -306,7 +313,6 @@ def load_uplimit_holding_position() -> dict[str, float] | None:
                     try:
                         uplimit_hp = float(uplimit_hp_raw)
                         uplimit_data[inst] = uplimit_hp
-                        loaded_count += 1
                     except (ValueError, TypeError):
                         continue
             except Exception:
@@ -472,8 +478,8 @@ def get_margin_file_path(path: str, market: str, data_date: int) -> str:
     # if market == "commodity":
     #     return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     mapping = {
-        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_gaguatian":
-            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_gaguatian_{data_date}.csv",
+        "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian":
+            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":
             f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx":
@@ -1037,7 +1043,7 @@ def calculate_product(
     clip = get_product_clip(db_product) if db_product else None
     uplimit_holding_position_data = None
     if market == "commodity":
-        uplimit_holding_position_data = load_uplimit_holding_position()
+        uplimit_holding_position_data = load_uplimit_holding_position(path, market, data_date)
 
     # ── 6. Per-instrument calculations ───────────────────────
     market_value          = 0.0
