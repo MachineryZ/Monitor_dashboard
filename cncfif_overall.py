@@ -1601,6 +1601,18 @@ def dashboard():
                         pass
 
             df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
+            def _build_low_limit_reason(row: pd.Series) -> str:
+                try:
+                    pll = float(row["product_low_limit"])
+                    if pll < 0.8:
+                        if row.get("product", "").split(" ")[0] == "ly1h":  # 防止已经有后缀时误判
+                            return " (流动性不足-ly1h)"
+                        return " (流动性不足)"
+                except (ValueError, TypeError):
+                    pass
+                return ""
+
+            df["product"] = df["product"].astype(str) + df.apply(_build_low_limit_reason, axis=1)
 
             money_cols = [
                 "balance", "pre_balance", "bank","market_value",
