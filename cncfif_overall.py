@@ -1711,7 +1711,7 @@ def dashboard():
                     ):
                         st.markdown("##### ⚠️ Product Low Limit Errors (流动性不足)")
                         st.dataframe(_err_df, width="stretch", hide_index=True)
-                        st.caption("product_low_limit < 0.8（ly1h 例外，仅标记为黄色）")
+                        st.caption("product_low_limit < 0.8（ly1h 例外，仅标记为黄色, 老产品暂时还没有是指要求）")
 
                 # ★★★ 在下面这一行之前插入 ★★★
                 st.markdown("---")
