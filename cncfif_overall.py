@@ -1706,9 +1706,6 @@ def dashboard():
                 st.subheader("Overview")
                 display_overview_with_tooltips(styled_df)
 
-                st.markdown("---")
-                st.subheader("Overview")
-                display_overview_with_tooltips(styled_df)
 
                 # ★ 新增：Overview 下方显示 product_low_limit 错误汇总（参考 Instrument Risk Errors 样式）
                 _low_limit_errors = []

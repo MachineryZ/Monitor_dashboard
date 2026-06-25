@@ -900,15 +900,32 @@ def _check_risk_position_match(
     long_pos: float | None,
     short_pos: float | None,
     risk_pos: float | None,
+    uplimit_value: float | None = None,   # ★ 新增
 ) -> str:
+    """
+    返回:
+    - "matched"      : 仓位匹配
+    - "red"          : 仓位不匹配
+    - "uplimit_hit"  : 目标仓位达到开仓上限（红色告警）
+    - "no_risk_data" : 风险日志中无该合约
+    """
+    if risk_pos is None:
+        return "no_risk_data"
+    
     long_int  = int(round(long_pos))  if long_pos  is not None else 0
     short_int = int(round(short_pos)) if short_pos is not None else 0
-    risk_int  = int(round(risk_pos))  if risk_pos  is not None else 0
+    risk_int  = int(round(risk_pos))
     net_pos = long_int - short_int
+    
+    # ★ 新增：如果目标仓位达到开仓上限（红色告警）
+    if uplimit_value is not None:
+        uplimit_int = int(uplimit_value)
+        if abs(risk_int) >= uplimit_int:
+            return "uplimit_hit"
+    
     if net_pos != risk_int:
         return "red"
     return "matched"
-
 
 def calculate_product(
     cfg: dict,
@@ -1163,6 +1180,14 @@ def calculate_product(
             inst_warnings.append(f"risk_position error: {e}")
             has_warning = True
             risk_pos = None
+
+        # ★ 修复：把 uplimit_value 也传进去，区分 "red" 和 "uplimit_hit"
+        risk_match = _check_risk_position_match(long_pos, short_pos, risk_pos, uplimit_value)
+        if risk_match in ("red", "uplimit_hit"):    # ★ 两个都标红
+            has_risk = True
+            if risk_match == "uplimit_hit":
+                # ★ 新增：uplimit_hit 时给 warning 加个原因说明
+                inst_warnings.append(f"目标仓位达到开仓上限 (uplimit={int(uplimit_value) if uplimit_value is not None else 'N/A'})")
 
         risk_match = _check_risk_position_match(long_pos, short_pos, risk_pos)
         if risk_match == "red":
@@ -1660,30 +1685,27 @@ def dashboard():
                     """
                     <div style="text-align:center; font-weight:bold; font-size:28px;
                                 margin-bottom:12px;">
-                        🚀 Futures Monitor Dashboard
+                        Futures Monitor Dashboard
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
 
                 st.markdown("---")
-                st.subheader("📊 Trading Summary")
+                st.subheader("Trading Summary")
                 summary_table = build_summary_table(df)
                 st.dataframe(summary_table, width="stretch")
 
                 if global_file_errors:
                     st.error(
-                        "⚠️ **Missing / unreadable files:**\n\n"
+                        "**Missing / unreadable files:**\n\n"
                         + "\n\n".join(f"- {e}" for e in global_file_errors)
                     )
 
                 st.markdown("---")
-                st.subheader("📈 Overview")
+                st.subheader("Overview")
                 display_overview_with_tooltips(styled_df)
 
-                st.markdown("---")
-                st.subheader("📈 Overview")
-                display_overview_with_tooltips(styled_df)
 
                 # ★ 新增：Overview 下方显示 product_low_limit 错误汇总（参考 Instrument Risk Errors 样式）
                 _low_limit_errors = []
@@ -1706,16 +1728,16 @@ def dashboard():
                 if _low_limit_errors:
                     _err_df = pd.DataFrame(_low_limit_errors)
                     with st.expander(
-                        f"⚠️ Product Low Limit Errors ({len(_low_limit_errors)})",
+                        f"Product Low Limit Errors ({len(_low_limit_errors)})",
                         expanded=False,
                     ):
-                        st.markdown("##### ⚠️ Product Low Limit Errors (流动性不足)")
+                        st.markdown("##### Product Low Limit Errors (流动性不足)")
                         st.dataframe(_err_df, width="stretch", hide_index=True)
                         st.caption("product_low_limit < 0.8（ly1h 例外，仅标记为黄色, 老产品暂时还没有市值要求）")
 
                 # ★★★ 在下面这一行之前插入 ★★★
                 st.markdown("---")
-                st.subheader("🔍 Per-Instrument Detail")
+                st.subheader("Per-Instrument Detail")
 
 
                 for prod_path, (cfg, ddf) in detail_map.items():
@@ -1851,7 +1873,7 @@ def dashboard():
                         if "_warnings" in ddf.columns:
                             inst_warns = ddf[ddf["_warnings"].str.len() > 0]
                             if not inst_warns.empty:
-                                st.warning("⚠️ **Instrument Warnings:**")
+                                st.warning("**Instrument Warnings:**")
                                 for idx, wr in inst_warns.iterrows():
                                     st.markdown(
                                         f"- **{wr['instrument']}**: {wr['_warnings']}"
@@ -1860,7 +1882,7 @@ def dashboard():
 
         except Exception as outer_err:
             with placeholder.container():
-                st.error(f"❌ Dashboard loop error: {outer_err}")
+                st.error(f"Dashboard loop error: {outer_err}")
                 import traceback
                 st.error(traceback.format_exc())
 
