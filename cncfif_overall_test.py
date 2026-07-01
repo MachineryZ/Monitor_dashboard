@@ -165,9 +165,8 @@ def get_bank_account_balance(path: str) -> float | None:
     
     try:
         fund_id, unit_id = PRODUCT_BANK_MAPPING[path]
-        today_date = datetime.datetime.now().strftime("%Y%m%d")
-        if fund_id == 569 or fund_id == 568:
-            # 构建请求
+        if fund_id == 569 or fund_id == 568 or fund_id == 215:
+            today_date = datetime.datetime.now().strftime("%Y%m%d")
             req_text = {
                 "fund_id": fund_id,
                 "unit_id": unit_id,
@@ -181,23 +180,34 @@ def get_bank_account_balance(path: str) -> float | None:
             # 提取银行账户余额
             bank_account = resp['unit_list'][0]['nav_list'][0]['total_asset']
             bank_account = float(bank_account)
+            # 构建请求
+            req_text = {
+                "fund_id": fund_id,
+                "unit_id": unit_id,
+                "start_date": today_date
+            }
+            req_json = json.dumps(req_text)
+            
+            # 调用 API
+            resp = rwp_api.get_unit_asset_chart(req_json)
+            
+            # 提取银行账户余额
+            if resp['unit_list'] == []:
+                bank_account = None
+            else:
+                bank_account = resp['unit_list'][0]['nav_list'][0]['total_asset']
+                bank_account = float(bank_account)
             
             # 缓存结果
             _rwp_api_cache[cache_key] = bank_account
         elif fund_id == 58:
-            bank_account = 7908.77
-            _rwp_api_cache[cache_key] = bank_account
-        elif fund_id == 215:
-            bank_account = 11143.03
+            bank_account = 22909.77
             _rwp_api_cache[cache_key] = bank_account
         elif fund_id == 319:
             bank_account = 49458.62
             _rwp_api_cache[cache_key] = bank_account
         elif fund_id == 34:
             bank_account = 60024.74
-            _rwp_api_cache[cache_key] = bank_account
-        elif fund_id == 215:
-            bank_account = 11143.03
             _rwp_api_cache[cache_key] = bank_account
             
         return bank_account
@@ -797,13 +807,13 @@ def style_max_margin(val):
 # ─────────────────────────────────────────────
 
 SUMMARY_COLS = [
-    "market", "product", "broker",
+    "market", "product",
     "init_capital",
-    "balance", "pre_balance", "bank",
+    "balance", "pre_balance",
     "market_value",
     "cost", "net_return", "fee", "pnl",
     "max_margin", "product_low_limit",
-    "margin", "margin_ratio", "update_time", "time",
+    "margin", "margin_ratio", "update_time", "broker",  "bank", "time",
     # ★ 每个 MarketValue 后面紧跟对应的 Ratio
     "BuyOpenNumber",  "BuyOpenMarketValue",  "BOMVRatio",
     "BuyCloseNumber", "BuyCloseMarketValue", "BCMVRatio",
