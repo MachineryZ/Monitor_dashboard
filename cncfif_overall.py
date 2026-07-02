@@ -177,23 +177,8 @@ def get_bank_account_balance(path: str) -> float | None:
             # 调用 API
             resp = rwp_api.get_unit_asset_chart(req_json)
             
-            # # 提取银行账户余额
-            # bank_account = resp['unit_list'][0]['nav_list'][0]['total_asset']
-            # bank_account = float(bank_account)
-
-            # # 构建请求
-            # req_text = {
-            #     "fund_id": fund_id,
-            #     "unit_id": unit_id,
-            #     "start_date": today_date
-            # }
-            # req_json = json.dumps(req_text)
-            
-            # # 调用 API
-            # resp = rwp_api.get_unit_asset_chart(req_json)
-            
             # 提取银行账户余额
-            if resp['unit_list'] == []:
+            if resp.get("unit_list", None) is None:
                 bank_account = None
             else:
                 bank_account = resp['unit_list'][0]['nav_list'][0]['total_asset']
@@ -1896,7 +1881,7 @@ def dashboard():
             import traceback
             st.error(traceback.format_exc())
 
-    time.sleep(20)
+    time.sleep(300)
     st.rerun()
 
 
