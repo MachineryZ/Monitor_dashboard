@@ -165,7 +165,7 @@ def get_bank_account_balance(path: str) -> float | None:
 
     try:
         fund_id, unit_id = PRODUCT_BANK_MAPPING[path]
-        if fund_id == 569 or fund_id == 568 or fund_id == 215:
+        if fund_id == 569 or fund_id == 568 or fund_id == 215 or fund_id == 58 or fund_id == 319 or fund_id == 34:
             today_date = datetime.datetime.now().strftime("%Y%m%d")
             req_text = {
                 "fund_id": fund_id,
@@ -186,15 +186,15 @@ def get_bank_account_balance(path: str) -> float | None:
             
             # 缓存结果
             _rwp_api_cache[cache_key] = bank_account
-        elif fund_id == 58:
-            bank_account = 22909.77
-            _rwp_api_cache[cache_key] = bank_account
-        elif fund_id == 319:
-            bank_account = 49458.62
-            _rwp_api_cache[cache_key] = bank_account
-        elif fund_id == 34:
-            bank_account = 60024.74
-            _rwp_api_cache[cache_key] = bank_account
+        # elif fund_id == 58:
+        #     bank_account = 22909.77
+        #     _rwp_api_cache[cache_key] = bank_account
+        # elif fund_id == 319:
+        #     bank_account = 49458.62
+        #     _rwp_api_cache[cache_key] = bank_account
+        # elif fund_id == 34:
+        #     bank_account = 60024.74
+        #     _rwp_api_cache[cache_key] = bank_account
             
         return bank_account
     
