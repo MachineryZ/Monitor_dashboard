@@ -360,6 +360,7 @@ def get_date_from_calendar() -> tuple[int, int]:
     date_int = int(date.strftime("%Y%m%d"))
     date_list = np.loadtxt(CALENDAR_PATH, dtype=np.int64, ndmin=1)
     pos = np.searchsorted(date_list, date_int, side="right")
+    date_int = int(date_list[pos-1])
     next_trade_day = int(date_list[pos])
     return date_int, next_trade_day
 
@@ -519,9 +520,11 @@ def send_alert(message: str):
         "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
         "?key=1f5ccb85-9f37-46a5-b5a7-d5e0a7cc9b3c"
     )
+    webhook_url_ope = ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=a125709c-94f3-4234-8b58-8d591845d150")
     msg = {"msgtype": "text", "text": {"content": message}}
     try:
         requests.post(webhook_url, data=json.dumps(msg), timeout=5)
+        requests.post(webhook_url_ope, data=json.dumps(msg), timeout=5)
     except Exception:
         pass
 
@@ -787,6 +790,14 @@ def style_max_margin(val):
         pass
     return ""
 
+def style_margin_ratio(val):
+    try:
+        if float(val.rstrip('%')) / 100 > 0.75:
+            return "background-color: #ff4b4b; color: white"
+    except (ValueError, TypeError):
+        pass
+    return ""
+
 
 # ─────────────────────────────────────────────
 # CORE: calculate_product
@@ -974,7 +985,7 @@ def calculate_product(
             withdraw     = float(ai_df["withdraw"].iloc[0])
             fee          = float(ai_df["fee"].iloc[0])
             margin       = float(ai_df["curr_margin"].iloc[0])
-            margin_ratio = margin / pre_balance if pre_balance > 0 else 0
+            margin_ratio = margin / balance if balance > 0 else 0
         except Exception as e:
             warnings_list.append(f"account_info parsing error: {e}")
             balance = pre_balance = fee = margin = 0.0
@@ -986,7 +997,7 @@ def calculate_product(
     data["deposit_withdraw"] = deposit - withdraw
     data["cost"]             = fee
     data["margin"]           = margin
-    init_capital = resolve_init_capital(cfg, pre_balance, balance)
+    init_capital = resolve_init_capital(cfg, (pre_balance + deposit - withdraw), balance)
     data["init_capital"] = init_capital
     
     # ★ 新增：获取银行账户余额并计算 bank 列
@@ -1217,7 +1228,7 @@ def calculate_product(
                         "close_profit":      round(cp_long, 2),
                         "position_profit":   round(pp_long, 2),
                         "total_pnl":         round(total_pnl_long, 2),
-                        "instrument_margin": round(inst_margin_long, 2),
+                        "instrument_margin": round(inst_margin_long, 2) if abs(inst_margin_long) > abs(price * short_pos * multiplier * margin_ratio) else 0,
                         "exchange":          exchange,
                         "last_trade_time":   last_trade_time,
                         "risk_match":        risk_match,
@@ -1239,6 +1250,7 @@ def calculate_product(
                     inst_margin_short = price * short_pos * multiplier * margin_ratio
                     inst_market_value_short = price * short_pos * multiplier
                     market_value += inst_market_value_short
+                    instrumetn_margin_max = max(inst_margin_short, instrument_margin_max)
                     row_dict = {
                         "instrument":        inst,
                         "market_value":      round(inst_market_value_short, 2),
@@ -1252,7 +1264,7 @@ def calculate_product(
                         "close_profit":      round(cp_short, 2),
                         "position_profit":   round(pp_short, 2),
                         "total_pnl":         round(total_pnl_short, 2),
-                        "instrument_margin": 0.0,
+                        "instrument_margin": round(inst_margin_short, 2) if abs(inst_margin_long) < abs(inst_margin_short) else round(inst_margin_short),
                         "exchange":          exchange,
                         "last_trade_time":   last_trade_time,
                         "risk_match":        risk_match,
@@ -1525,7 +1537,28 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 # DASHBOARD MAIN
 # ─────────────────────────────────────────────
 
+ALERT_FILE = "alert_status.json"
+
+def load_alert_status():
+    if os.path.exists(ALERT_FILE):
+        with open(ALERT_FILE, "r") as f:
+            return json.load(f)
+
+    return {
+        "product_low_limit": {},
+        "max_margin": {},
+        "margin_ratio": {},
+    }
+
+
+def save_alert_status(status):
+    with open(ALERT_FILE, "w") as f:
+        json.dump(status, f)
+
 def dashboard():
+    
+    ALERT_STATUS = load_alert_status()
+
     st.set_page_config(page_title="Futures Monitor Dashboard", layout="wide")
 
     try:
@@ -1603,22 +1636,115 @@ def dashboard():
                 detail_map[cfg["path"]]        = (cfg, detail_df)
                 detail_status_map[cfg["path"]] = detail_status
 
+
             if market_open:
                 try:
                     pll = float(row["product_low_limit"])
                     imu = float(row["max_margin"])
-                    if pll < 0.8 and name not in {"ly1h"}:
-                        send_alert(
-                            f"[ALERT] product_low_limit < 0.8 | "
-                            f"broker={row['broker']} product={name}"
-                        )
+                    mrt = float(row["margin_ratio"])
+
+                    alert_key = f"{ft}_{row['broker']}_{name}_market_value"
+
+                    print(
+                        "ALERT CHECK:",
+                        alert_key,
+                        "low_limit=",
+                        ALERT_STATUS["product_low_limit"].get(alert_key, False),
+                        "max_margin=",
+                        ALERT_STATUS["max_margin"].get(alert_key, False),
+                        "margin_ratio=",
+                        ALERT_STATUS["margin_ratio"].get(alert_key, False),
+                            
+                    )
+
+
+                    # =========================
+                    # product_low_limit报警
+                    # =========================
+                    if name not in {"ly1h"}:
+
+                        if pll < 0.8:
+
+                            # 第一次异常才报警
+                            if not ALERT_STATUS["product_low_limit"].get(alert_key, False):
+
+                                print("SEND product_low_limit ALERT:", alert_key)
+
+                                send_alert(
+                                    f"[ALERT] product_low_limit < 0.8 | "
+                                    f"broker={row['broker']} product={name}"
+                                )
+
+                                ALERT_STATUS["product_low_limit"][alert_key] = True
+
+                                # 保存状态
+                                save_alert_status(ALERT_STATUS)
+
+                        else:
+                            # 恢复正常，下次异常允许重新报警
+                            if ALERT_STATUS["product_low_limit"].get(alert_key, False):
+                                print("RESET product_low_limit:", alert_key)
+
+                            ALERT_STATUS["product_low_limit"][alert_key] = False
+                            save_alert_status(ALERT_STATUS)
+
+
+                    alert_key = f"{ft}_{row['broker']}_{name}_max_margin"
+
+                    # =========================
+                    # max_margin报警
+                    # =========================
                     if imu > 0.25:
-                        send_alert(
-                            f"[ALERT] max_margin > 0.25 | "
-                            f"broker={row['broker']} product={name}"
-                        )
+
+                        if not ALERT_STATUS["max_margin"].get(alert_key, False):
+
+                            print("SEND max_margin ALERT:", alert_key)
+
+                            send_alert(
+                                f"[ALERT] max_margin > 0.25 | "
+                                f"broker={row['broker']} product={name}"
+                            )
+
+                            ALERT_STATUS["max_margin"][alert_key] = True
+
+                            save_alert_status(ALERT_STATUS)
+
+                    else:
+
+                        if ALERT_STATUS["max_margin"].get(alert_key, False):
+                            print("RESET max_margin:", alert_key)
+
+                        ALERT_STATUS["max_margin"][alert_key] = False
+                        save_alert_status(ALERT_STATUS)
+
+                    alert_key = f"{ft}_{row['broker']}_{name}_margin_ratio"
+                    if mrt > 0.75:
+
+                        if not ALERT_STATUS["margin_ratio"].get(alert_key, False):
+
+                            print("SEND margin_ratio ALERT:", alert_key)
+
+                            send_alert(
+                                f"[ALERT] margin_ratio > 0.75 | "
+                                f"broker={row['broker']} product={name}"
+                            )
+
+                            ALERT_STATUS["margin_ratio"][alert_key] = True
+
+                            save_alert_status(ALERT_STATUS)
+
+                    else:
+
+                        if ALERT_STATUS["margin_ratio"].get(alert_key, False):
+                            print("RESET margin_ratio:", alert_key)
+
+                        ALERT_STATUS["margin_ratio"][alert_key] = False
+                        save_alert_status(ALERT_STATUS)
+
                 except (ValueError, TypeError):
                     pass
+
+
 
         df = pd.DataFrame(summary_rows, columns=SUMMARY_COLS)
 
@@ -1673,6 +1799,7 @@ def dashboard():
             display_df.style
             .apply(style_product_low_limit, axis=1)
             .map(style_max_margin, subset=["max_margin"])
+            .map(style_margin_ratio, subset=["margin_ratio"])
         )
 
         with placeholder.container():
