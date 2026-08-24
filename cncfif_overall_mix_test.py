@@ -20,7 +20,6 @@ RWP_CREDENTIALS = {
 # ── 产品与银行账户映射 ────────────────────────────────
 # 产品路径 → (fund_id, unit_id)
 PRODUCT_BANK_MAPPING = {
-    "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya": (58, 230),  # 八卦田（安心1号），不正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian": (58, 230),  # 八卦田（安心1号），不正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":   (569, 9118),  # 山海CTA平衡1号， 正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx": (568, 9122),  # 进取， 正常
@@ -58,15 +57,6 @@ FUTURES_SESSIONS = [
 
 # ── Product registry ──────────────────────────
 PRODUCT_CONFIGS = [
-    {
-        "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya",
-        "broker":       "ya",
-        "product":      "ax1h_ya",
-        "market":       "commodity",
-        "init_capital": 0,
-        "aum_mul":      4.0,
-        "db_product":   "commodity_melt_ax1h",
-    },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
         "broker":       "dz",
@@ -513,11 +503,6 @@ def get_margin_file_path(path: str, market: str, data_date: int) -> list[str]:
     # if market == "commodity":
     #     return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     mapping = {
-        "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya":
-            [
-                f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_ax1h_ya_{data_date}.csv",
-                f"/cpfs/rawdata/cnif_all_need_before_open/ziyong_margin_uplimit.csv"
-            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian":
             [
                 f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
@@ -557,7 +542,6 @@ def get_margin_file_path(path: str, market: str, data_date: int) -> list[str]:
     }
     return mapping.get(path, [])
 
-
 def get_static_info_path(market: str) -> str:
     # if market == "commodity":
     #     return "/cpfs/rawdata/cncf_all_nedd_before_open/ins_static_info.csv"
@@ -593,11 +577,11 @@ def send_alert(message: str):
     )
     webhook_url_ope = ("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=a125709c-94f3-4234-8b58-8d591845d150")
     msg = {"msgtype": "text", "text": {"content": message}}
-    # try:
-    #     requests.post(webhook_url, data=json.dumps(msg), timeout=5)
-    #     requests.post(webhook_url_ope, data=json.dumps(msg), timeout=5)
-    # except Exception:
-    #     pass
+    try:
+        requests.post(webhook_url, data=json.dumps(msg), timeout=5)
+        requests.post(webhook_url_ope, data=json.dumps(msg), timeout=5)
+    except Exception:
+        pass
 
 
 def safe_float(val):
@@ -658,7 +642,6 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
     result = {}
     if market == "commodity":
         strategy_mapping = {
-            "ax1h_ya": "cncf_melt_ax1h_ya_bohr",
             "bgt_ax1h": "cncf_melt_bgt_dz_bohr",
             "shjq": "cncf_melt_shjq_zx_bohr",
             "shph1h": "cncf_melt_shph1h_zx_bohr",
@@ -1040,7 +1023,7 @@ def calculate_product(
     data["broker"]         = broker
     data["time"]           = datetime.datetime.now().strftime("%H:%M:%S")
     data["is_market_open"] = market_open
-        
+
     # ★ 新增：标记 position_data 是否为空（清仓状态）
     is_position_empty = False
     data["is_position_empty"] = False
@@ -1116,12 +1099,11 @@ def calculate_product(
         # ★ 新增：标记 position_data 为空（清仓状态）
         is_position_empty = True
         data["is_position_empty"] = True
-    else:
-        # 删除 instrument_id 以 IM/IH/IC/IF 开头的合约
-        if data["market"] == "cncf":
-            pd_df = pd_df[
-                ~pd_df["instrument_id"].astype(str).str.startswith(("IM", "IH", "IC", "IF"))
-            ]
+    # else:
+    #     # 删除 instrument_id 以 IM/IH/IC/IF 开头的合约
+    #     pd_df = pd_df[
+    #         ~pd_df["instrument_id"].astype(str).str.startswith(("IM", "IH", "IC", "IF"))
+    #     ]
 
     try:
         abs_return = float(

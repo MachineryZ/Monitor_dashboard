@@ -27,6 +27,7 @@ PRODUCT_BANK_MAPPING = {
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":           (319, 1604),  # 可按需配置， 不正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (34, 216),  # 可按需配置，不正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (215, 1049),  # 可按需配置，不正常
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya":           (215, 1049),  # 可按需配置，不正常
 }
 
 _rwp_api_cache: dict[str, float] = {}  # 缓存银行账户余额
@@ -71,7 +72,7 @@ PRODUCT_CONFIGS = [
         "product":      "shjq",
         "market":       "commodity",
         "init_capital": 0,
-        "db_product":   "cncf_melt_shjq_zx",
+        "db_product":   "commodity_melt_shjq_zx",
     },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx",
@@ -112,6 +113,15 @@ PRODUCT_CONFIGS = [
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
         "broker":       "zx",
         "product":      "zz1h",
+        "market":       "futures",
+        "init_capital": 0,
+        "aum_mul":      4.7858,
+        "db_product":   None,
+    },
+    {
+        "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya",
+        "broker":       "ya",
+        "product":      "zz1h_ya",
         "market":       "futures",
         "init_capital": 0,
         "aum_mul":      4.7858,
@@ -412,16 +422,34 @@ def get_next_trade_date(current_date: int) -> int:
     return int(d.strftime("%Y%m%d"))
 
 
-def safe_read_csv(filepath: str) -> tuple[pd.DataFrame | None, str | None]:
-    if not os.path.exists(filepath):
-        return None, f"File not found: {filepath}"
-    if os.path.getsize(filepath) == 0:
-        return None, f"File is completely empty (0 bytes): {filepath}"
+def safe_read_csv(filepath: str | list[str]) -> tuple[pd.DataFrame | None, str | None]:
+    if isinstance(filepath, str):
+        filepath = [filepath]
+
+    dfs = []
+
+    for path in filepath:
+        if not os.path.exists(path):
+            return None, f"File not found: {path}"
+
+        if os.path.getsize(path) == 0:
+            return None, f"File is completely empty (0 bytes): {path}"
+
+        try:
+            df = pd.read_csv(path)
+            dfs.append(df)
+        except Exception as e:
+            return None, f"CSV parse error [{path}]: {e}"
+
+    if not dfs:
+        return None, "No CSV files provided"
+
     try:
-        df = pd.read_csv(filepath)
+        df = pd.concat(dfs, ignore_index=True)
         return df, None
     except Exception as e:
-        return None, f"CSV parse error [{filepath}]: {e}"
+        return None, f"CSV concat error: {e}"
+
 
 
 def file_exists_for_date(path: str, date_int: int) -> bool:
@@ -471,40 +499,68 @@ def get_data_date(
 # PATH HELPERS
 # ─────────────────────────────────────────────
 
-def get_margin_file_path(path: str, market: str, data_date: int) -> str:
+def get_margin_file_path(path: str, market: str, data_date: int) -> list[str]:
     # if market == "commodity":
     #     return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     mapping = {
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian":
-            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
+            [
+                f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
+                f"/cpfs/rawdata/cnif_all_need_before_open/ziyong_margin_uplimit.csv"
+            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":
-            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
+            [
+                f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_shjq_zx_{data_date}.csv",
+                f"/cpfs/rawdata/cnif_all_need_before_open/ziyong_margin_uplimit.csv"
+            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx":
-            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+            [
+                f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+                f"/cpfs/rawdata/cnif_all_need_before_open/ziyong_margin_uplimit.csv"
+            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date":
-            f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+            [
+                f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_{data_date}.csv",
+                f"/cpfs/rawdata/cnif_all_need_before_open/ziyong_margin_uplimit.csv"
+            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h":
-            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{data_date}.csv",
+            [
+                f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jz1h_{data_date}.csv",
+            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":
-            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_ly1h_{data_date}.csv",
+            [
+                f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_ly1h_{data_date}.csv",
+            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":
-            f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv",
+            [
+                f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv",
+            ],
+        "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya":
+            [
+                f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv",
+            ],
     }
-    return mapping.get(path, "")
-
+    return mapping.get(path, [])
 
 def get_static_info_path(market: str) -> str:
-    if market == "commodity":
-        return "/cpfs/rawdata/cncf_all_nedd_before_open/ins_static_info.csv"
-    return "/cpfs/rawdata/cnif_all_need_before_open/ins_static_info.csv"
+    # if market == "commodity":
+    #     return "/cpfs/rawdata/cncf_all_nedd_before_open/ins_static_info.csv"
+    return ["/cpfs/rawdata/cncf_all_nedd_before_open/ins_static_info.csv", "/cpfs/rawdata/cnif_all_need_before_open/ins_static_info.csv"]
 
 
-def get_market_data_path(market: str, data_date: int) -> str:
-    kind = "commodity" if market == "commodity" else "futures"
-    return (
+def get_market_data_path(market: str, data_date: int) -> list[str]:
+    kinds = ["commodity", "futures"]
+
+    if datetime.datetime.now().hour >= 20 or datetime.datetime.now().hour < 9 or (datetime.datetime.now().hour == 9 and datetime.datetime.now().minute < 30):
+        print("no")
+        kinds.remove("futures")
+
+    return [
         f"/mnt/nfs_bohr_data1/china/trading_realdata"
         f"/partial_market_data_realtime/{kind}/{data_date}.csv"
-    )
+        for kind in kinds
+    ]
+
 
 
 def get_trade_file_path(path: str, data_date: int) -> str:
@@ -527,6 +583,18 @@ def send_alert(message: str):
         requests.post(webhook_url_ope, data=json.dumps(msg), timeout=5)
     except Exception:
         pass
+
+
+def safe_float(val):
+    try:
+        # 如果是带%的字符串
+        if isinstance(val, str) and val.endswith("%"):
+            num_str = val.replace("%", "")
+            return float(num_str) / 100
+        return float(val)
+    except (ValueError, TypeError):
+        print("safe_float异常:", e)
+        return 0.0
 
 
 # ─────────────────────────────────────────────
@@ -1032,6 +1100,12 @@ def calculate_product(
         # ★ 新增：标记 position_data 为空（清仓状态）
         is_position_empty = True
         data["is_position_empty"] = True
+    else:
+        # 删除 instrument_id 以 IM/IH/IC/IF 开头的合约
+        if data["market"] == "cncf":
+            pd_df = pd_df[
+                ~pd_df["instrument_id"].astype(str).str.startswith(("IM", "IH", "IC", "IF"))
+            ]
 
     try:
         abs_return = float(
@@ -1228,7 +1302,7 @@ def calculate_product(
                         "close_profit":      round(cp_long, 2),
                         "position_profit":   round(pp_long, 2),
                         "total_pnl":         round(total_pnl_long, 2),
-                        "instrument_margin": round(inst_margin_long, 2) if abs(inst_margin_long) > abs(price * short_pos * multiplier * margin_ratio) else 0,
+                        "instrument_margin": round(inst_margin_long, 2) if abs(inst_margin_long) > abs(price * short_pos * multiplier * margin_ratio) else round(price * short_pos * multiplier * margin_ratio, 2),
                         "exchange":          exchange,
                         "last_trade_time":   last_trade_time,
                         "risk_match":        risk_match,
@@ -1537,7 +1611,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 # DASHBOARD MAIN
 # ─────────────────────────────────────────────
 
-ALERT_FILE = "alert_status.json"
+ALERT_FILE = "alert_status_test.json"
 
 def load_alert_status():
     if os.path.exists(ALERT_FILE):
@@ -1639,12 +1713,11 @@ def dashboard():
 
             if market_open:
                 try:
-                    pll = float(row["product_low_limit"])
-                    imu = float(row["max_margin"])
-                    mrt = float(row["margin_ratio"])
+                    pll = safe_float(row["product_low_limit"])
+                    imu = safe_float(row["max_margin"])
+                    mrt = safe_float(row["margin_ratio"])
 
                     alert_key = f"{ft}_{row['broker']}_{name}_market_value"
-
                     print(
                         "ALERT CHECK:",
                         alert_key,
@@ -1741,7 +1814,8 @@ def dashboard():
                         ALERT_STATUS["margin_ratio"][alert_key] = False
                         save_alert_status(ALERT_STATUS)
 
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as e:
+                    print("异常打印:", e)
                     pass
 
 
