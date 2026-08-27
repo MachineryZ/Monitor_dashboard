@@ -1438,7 +1438,7 @@ def draw_intraday_charts(
     product_checks: dict,
     show_all: bool,
     contract_filter: str,
-    init_capital_map: dict,  # product_key -> init_capital
+    init_capital_map: dict,
 ):
     """
     绘制三个日内图表，init_capital_map 用于将产品PnL转为百分比
@@ -1448,35 +1448,40 @@ def draw_intraday_charts(
         key = f"{cfg['market']}_{cfg['product']}"
         if not product_checks.get(key, True):
             continue
-        init_cap = init_capital_map.get(key, 1.0)  # 避免除零
+        init_cap = init_capital_map.get(key, 1.0)
         data = build_intraday_series(cfg, current_date, static_df, init_cap)
         if data:
             all_product_data[key] = (data, init_cap)
 
-    # 调试信息：如果无数据，显示详细原因
     if not all_product_data:
-        st.error("⚠️ 没有可用的日内数据，请检查：")
-        # 显示每个产品的路径和文件数量
-        for cfg in product_configs:
-            key = f"{cfg['market']}_{cfg['product']}"
-            if product_checks.get(key, True):
-                path = cfg["path"]
-                if os.path.exists(path):
-                    files = [f for f in os.listdir(path) if f.startswith("position_data_") and f.endswith(".csv")]
-                    st.write(f"- {key}: {len(files)} 个快照文件")
-                    if len(files) > 0:
-                        # 读取第一个文件检查是否有持仓
-                        sample_file = os.path.join(path, files[0])
-                        df, err = safe_read_csv(sample_file)
-                        if df is not None and not df.empty:
-                            n_contracts = df["instrument_id"].nunique()
-                            st.write(f"  示例文件 {files[0]} 包含 {n_contracts} 个合约")
-                        else:
-                            st.write(f"  示例文件 {files[0]} 读取失败或为空")
-                else:
-                    st.write(f"- {key}: 路径不存在")
-        st.info("提示：请确认快照文件包含非零持仓数据。")
+        st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
+
+    # 收集所有时间索引用于刻度
+    all_time_idxs = []
+    for _, (instrument_data, _) in all_product_data.items():
+        for inst, df in instrument_data.items():
+            all_time_idxs.extend(df["time_idx"].tolist())
+    if all_time_idxs:
+        min_idx = min(all_time_idxs)
+        max_idx = max(all_time_idxs)
+        tick_vals = list(range(min_idx, max_idx+1, 30))
+        label_map = {}
+        for _, (instrument_data, _) in all_product_data.items():
+            for inst, df in instrument_data.items():
+                for _, row in df.iterrows():
+                    idx = int(row["time_idx"])
+                    label = row["time_label"]
+                    if idx not in label_map:
+                        label_map[idx] = label
+        ticktext = [label_map.get(v, "") for v in tick_vals if v in label_map]
+        tickvals = [v for v in tick_vals if v in label_map]
+        if not ticktext:
+            tickvals = sorted(all_time_idxs)[::30]
+            ticktext = [label_map.get(v, "") for v in tickvals]
+    else:
+        tickvals = None
+        ticktext = None
 
     # ---- 图1: 产品 PnL（百分比） ----
     fig1 = go.Figure()
@@ -1503,39 +1508,16 @@ def draw_intraday_charts(
             marker=dict(size=4),
         ))
 
-    # 设置x轴刻度标签
-    all_time_idxs = []
-    for _, (instrument_data, _) in all_product_data.items():
-        for inst, df in instrument_data.items():
-            all_time_idxs.extend(df["time_idx"].tolist())
-    if all_time_idxs:
-        min_idx = min(all_time_idxs)
-        max_idx = max(all_time_idxs)
-        tick_vals = list(range(min_idx, max_idx+1, 30))
-        label_map = {}
-        for _, (instrument_data, _) in all_product_data.items():
-            for inst, df in instrument_data.items():
-                for _, row in df.iterrows():
-                    idx = int(row["time_idx"])
-                    label = row["time_label"]
-                    if idx not in label_map:
-                        label_map[idx] = label
-        ticktext = [label_map.get(v, "") for v in tick_vals if v in label_map]
-        tickvals = [v for v in tick_vals if v in label_map]
-        if not ticktext:
-            tickvals = sorted(all_time_idxs)[::30]
-            ticktext = [label_map.get(v, "") for v in tickvals]
-        fig1.update_xaxis(tickvals=tickvals, ticktext=ticktext, title="Time")
-    else:
-        fig1.update_xaxis(title="Time")
-
+    # 使用 update_layout 设置 x 轴
+    xaxis_dict = dict(title="Time")
+    if tickvals and ticktext:
+        xaxis_dict.update(tickvals=tickvals, ticktext=ticktext)
     fig1.update_layout(
         title="Product PnL (%) Over Time (Intraday)",
-        xaxis_title="Time",
-        yaxis_title="PnL (%)",
+        xaxis=xaxis_dict,
+        yaxis=dict(title="PnL (%)", autorange=True, rangemode="tozero"),
         legend_title="Products",
         hovermode="x unified",
-        yaxis=dict(autorange=True, rangemode="tozero"),
     )
 
     # ---- 图2: 合约盈亏比例 ----
@@ -1569,17 +1551,15 @@ def draw_intraday_charts(
                 hovertemplate="%{text}<extra></extra>",
                 text=group["time_label"],
             ))
-        if all_time_idxs:
-            fig2.update_xaxis(tickvals=tickvals, ticktext=ticktext, title="Time")
-        else:
-            fig2.update_xaxis(title="Time")
+    xaxis_dict2 = dict(title="Time")
+    if tickvals and ticktext:
+        xaxis_dict2.update(tickvals=tickvals, ticktext=ticktext)
     fig2.update_layout(
         title="Contract PnL / Market Value",
-        xaxis_title="Time",
-        yaxis_title="PnL Ratio",
+        xaxis=xaxis_dict2,
+        yaxis=dict(title="PnL Ratio", autorange=True),
         legend_title="Contracts",
         hovermode="x unified",
-        yaxis=dict(autorange=True),
     )
 
     # ---- 图3: 手数比例 ----
@@ -1614,22 +1594,21 @@ def draw_intraday_charts(
                 hovertemplate="%{text}<extra></extra>",
                 text=group["time_label"],
             ))
-        if all_time_idxs:
-            fig3.update_xaxis(tickvals=tickvals, ticktext=ticktext, title="Time")
-        else:
-            fig3.update_xaxis(title="Time")
+    xaxis_dict3 = dict(title="Time")
+    if tickvals and ticktext:
+        xaxis_dict3.update(tickvals=tickvals, ticktext=ticktext)
     fig3.update_layout(
         title="Position Change Ratio (Current - Open) / Open",
-        xaxis_title="Time",
-        yaxis_title="Position Ratio",
+        xaxis=xaxis_dict3,
+        yaxis=dict(title="Position Ratio", autorange=True),
         legend_title="Contracts",
         hovermode="x unified",
-        yaxis=dict(autorange=True),
     )
 
-    st.plotly_chart(fig1, use_container_width=True)
-    st.plotly_chart(fig2, use_container_width=True)
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig1, width="stretch")
+    st.plotly_chart(fig2, width="stretch")
+    st.plotly_chart(fig3, width="stretch")
+
 
 # ─────────────────────────────────────────────
 # DASHBOARD MAIN（修改：增加 init_capital_map）
