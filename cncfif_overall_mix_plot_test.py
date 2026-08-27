@@ -13,6 +13,7 @@ import json
 
 # ── 新增：Plotly 用于图表 ──
 import plotly.graph_objects as go
+from datetime import timedelta  # 新增导入
 
 # ── RWP API 配置 ──────────────────────────────────────
 RWP_CREDENTIALS = {
@@ -242,7 +243,7 @@ def get_product_uplimit_coef(product_name: str) -> float | None:
         return None
 
 # ─────────────────────────────────────────────
-# 辅助函数（不变，省略部分以节省篇幅，但保留所有原功能）
+# 辅助函数（不变）
 # ─────────────────────────────────────────────
 
 def load_uplimit_holding_position(path: str, market: str, data_date: int) -> dict[str, float] | None:
@@ -554,7 +555,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
     return result if result else None
 
 # ─────────────────────────────────────────────
-# 交易统计函数（不变，保持原有）
+# 交易统计函数（不变）
 # ─────────────────────────────────────────────
 
 _OPEN_FLAGS  = {79, 48, 0}
@@ -685,7 +686,7 @@ def style_margin_ratio(val):
     return ""
 
 # ─────────────────────────────────────────────
-# CORE: calculate_product（与原始几乎相同，仅增加 is_position_empty 标记）
+# CORE: calculate_product（不变）
 # ─────────────────────────────────────────────
 
 SUMMARY_COLS = [
@@ -1129,7 +1130,7 @@ def load_shared_files(market: str, path: str, current_date: int, market_open: bo
     return sd_df, future_df, margin_df, errors
 
 # ─────────────────────────────────────────────
-# OVERVIEW TOOLTIP（不变，略）
+# OVERVIEW TOOLTIP（不变）
 # ─────────────────────────────────────────────
 
 def display_overview_with_tooltips(styled_df):
@@ -1239,7 +1240,7 @@ def build_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     return summary_df
 
 # ─────────────────────────────────────────────
-# 新增：日内图表构建与绘制函数
+# 日内图表构建与绘制函数（已按需求修改）
 # ─────────────────────────────────────────────
 
 def load_prev_position(path: str, prev_date: int) -> pd.DataFrame | None:
@@ -1260,14 +1261,52 @@ def load_trade_data(path: str, date: int) -> pd.DataFrame | None:
         return None
     return df
 
-def build_intraday_series(cfg: dict, current_date: int, prev_date: int, static_df: pd.DataFrame | None) -> dict | None:
+def build_intraday_series(
+    cfg: dict,
+    current_date: int,
+    static_df: pd.DataFrame | None,
+    init_capital: float,
+) -> dict | None:
+    """
+    扫描产品路径下的 position_data_YYYYMMDD_YYYYMMDD_HH:MM:SS.csv 文件，
+    构建每个合约的日内时序（时间→交易分钟索引，净持仓，市值，累计盈亏）。
+    返回 {instrument: DataFrame}，DataFrame 包含列：
+        'time_idx'   : 从夜盘21:00开始的交易分钟索引（连续整数）
+        'time_label' : 显示时间标签（如 '21:05'）
+        'net_pos'    : 净持仓（多头-空头）
+        'market_value' : 市值（abs(net_pos) * price * multiplier）
+        'cum_pnl'    : 累计盈亏（close_profit + position_profit）
+        'open_net'   : 开盘净持仓（取第一个快照的净持仓）
+        'price'      : 使用价格（优先从价格缓存获取，否则用pre_settlement_price）
+    """
     path = cfg["path"]
-    prev_pos_df = load_prev_position(path, prev_date)
-    if prev_pos_df is None:
+    # 获取所有 position_data_ 文件
+    files = [f for f in os.listdir(path) if f.startswith("position_data_") and f.endswith(".csv")]
+    if not files:
         return None
-    trade_df = load_trade_data(path, current_date)
-    if trade_df is None or trade_df.empty:
+
+    # 解析文件名中的更新时间，排序
+    def parse_time_from_filename(fname: str) -> datetime:
+        # 格式: position_data_20260826_20260826_09:53:11.csv
+        parts = fname.replace(".csv", "").split("_")
+        if len(parts) >= 5:
+            date_str = parts[1]  # 20260826
+            time_str = parts[3] + ":" + parts[4] + ":" + parts[5]  # 09:53:11
+            return datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
+        else:
+            return None
+
+    timed_files = []
+    for f in files:
+        dt = parse_time_from_filename(f)
+        if dt is not None:
+            timed_files.append((dt, os.path.join(path, f)))
+    timed_files.sort(key=lambda x: x[0])  # 按时间排序
+
+    if not timed_files:
         return None
+
+    # 合约乘数映射
     mult_map = {}
     if static_df is not None and not static_df.empty:
         for _, row in static_df.iterrows():
@@ -1276,125 +1315,114 @@ def build_intraday_series(cfg: dict, current_date: int, prev_date: int, static_d
             if inst:
                 mult_map[inst] = float(mult)
 
-    pos_dict = {}
-    for _, row in prev_pos_df.iterrows():
-        inst = row["instrument_id"]
-        pos_type = row["pos_type"]
-        yd_pos = int(row.get("yd_position", 0))
-        if inst not in pos_dict:
+    # 数据字典
+    data_dict = {}
+
+    # 定义交易时段（用于计算交易分钟索引）
+    def get_trade_minute_index(dt: datetime, base_date: datetime) -> int:
+        start = base_date.replace(hour=21, minute=0, second=0, microsecond=0)
+        minutes = 0
+        sessions = [
+            (datetime.time(21, 0), datetime.time(23, 59), False),
+            (datetime.time(0, 0), datetime.time(2, 30), True),
+            (datetime.time(9, 0), datetime.time(10, 15), False),
+            (datetime.time(10, 30), datetime.time(11, 30), False),
+            (datetime.time(13, 30), datetime.time(15, 0), False),
+        ]
+        cur = start
+        while cur < dt:
+            in_session = False
+            cur_time = cur.time()
+            for s_start, s_end, cross in sessions:
+                if not cross:
+                    if s_start <= cur_time <= s_end:
+                        in_session = True
+                        break
+                else:
+                    if cur_time <= s_end or cur_time >= s_start:
+                        in_session = True
+                        break
+            if in_session:
+                minutes += 1
+            cur += timedelta(minutes=1)
+        return minutes
+
+    # 遍历所有快照
+    for dt, fpath in timed_files:
+        df, err = safe_read_csv(fpath)
+        if err or df is None or df.empty:
+            continue
+
+        long_df = df[df["pos_type"] == "LONG"]
+        short_df = df[df["pos_type"] == "SHORT"]
+
+        inst_net = {}
+        inst_profit = {}
+        inst_price = {}
+        inst_mult = {}
+        for inst in set(long_df["instrument_id"]).union(set(short_df["instrument_id"])):
+            long_rows = long_df[long_df["instrument_id"] == inst]
+            short_rows = short_df[short_df["instrument_id"] == inst]
+            long_pos = long_rows["position"].sum() if not long_rows.empty else 0
+            short_pos = short_rows["position"].sum() if not short_rows.empty else 0
+            net = long_pos - short_pos
+            close_profit = long_rows["close_profit"].sum() + short_rows["close_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
+            position_profit = long_rows["position_profit"].sum() + short_rows["position_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
+            total_pnl = close_profit + position_profit
+            # 若净持仓和盈亏均为0，跳过该合约（避免大量零值点）
+            if net == 0 and total_pnl == 0:
+                continue
+            price = get_price(inst)
+            if price is None:
+                if not long_rows.empty:
+                    price = float(long_rows["pre_settlement_price"].iloc[0])
+                elif not short_rows.empty:
+                    price = float(short_rows["pre_settlement_price"].iloc[0])
+                else:
+                    price = 0.0
             mult = mult_map.get(inst, 1.0)
-            pre_settle = float(row.get("pre_settlement_price", 0))
-            pos_dict[inst] = {"net": 0, "avg_price": pre_settle, "cum_pnl": 0.0, "open_net": 0, "multiplier": mult}
-        if pos_type == "LONG":
-            pos_dict[inst]["net"] += yd_pos
-            pos_dict[inst]["open_net"] += yd_pos
-        elif pos_type == "SHORT":
-            pos_dict[inst]["net"] -= yd_pos
-            pos_dict[inst]["open_net"] -= yd_pos
-    if not pos_dict:
-        return None
+            inst_net[inst] = net
+            inst_profit[inst] = total_pnl
+            inst_price[inst] = price
+            inst_mult[inst] = mult
 
-    time_col = None
-    for col in ["trade_time", "update_time"]:
-        if col in trade_df.columns:
-            time_col = col
-            break
-    if time_col is None:
-        return None
-
-    trade_df["time_str"] = trade_df[time_col].astype(str)
-    def parse_time(tstr):
-        try:
-            return pd.to_datetime(tstr)
-        except:
-            date_str = str(current_date)
-            if len(tstr) == 8 and tstr.count(':') == 2:
-                dt = datetime.strptime(f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {tstr}", "%Y-%m-%d %H:%M:%S")
-                return dt
-            else:
-                return pd.NaT
-    trade_df["datetime"] = trade_df["time_str"].apply(parse_time)
-    trade_df = trade_df.dropna(subset=["datetime"])
-    trade_df = trade_df.sort_values("datetime")
-
-    records = []
-    for idx, row in trade_df.iterrows():
-        inst = row["instrument_id"]
-        if inst not in pos_dict:
-            continue
-        direction = int(row.get("direction", 0))
-        offset_flag = int(row.get("offset_flag", 0))
-        volume = float(row.get("volume", 0))
-        price = float(row.get("price", 0))
-        if volume == 0 or price == 0:
+        if not inst_net:
             continue
 
-        mult = pos_dict[inst]["multiplier"]
-        net = pos_dict[inst]["net"]
-        avg_price = pos_dict[inst]["avg_price"]
-        cum_pnl = pos_dict[inst]["cum_pnl"]
+        base = datetime.combine((datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(), datetime.time(21, 0))
+        time_idx = get_trade_minute_index(dt, base)
+        time_label = dt.strftime("%H:%M")
 
-        is_open = offset_flag in (79, 48, 0)
-        is_close = offset_flag in (67, 68)
+        for inst, net in inst_net.items():
+            if inst not in data_dict:
+                data_dict[inst] = []
+            data_dict[inst].append({
+                "time_idx": time_idx,
+                "time_label": time_label,
+                "net_pos": net,
+                "market_value": abs(net * inst_price.get(inst, 0) * inst_mult.get(inst, 1.0)),
+                "cum_pnl": inst_profit.get(inst, 0),
+                "open_net": 0,
+                "price": inst_price.get(inst, 0),
+            })
 
-        if is_open:
-            if direction == 66:
-                new_net = net + volume
-                if new_net != 0:
-                    old_cost = net * avg_price * mult
-                    new_cost = old_cost + volume * price * mult
-                    avg_price = new_cost / (new_net * mult) if new_net != 0 else price
-                net = new_net
-            elif direction == 83:
-                new_net = net - volume
-                if new_net != 0:
-                    old_cost = net * avg_price * mult
-                    new_cost = old_cost - volume * price * mult
-                    avg_price = new_cost / (new_net * mult) if new_net != 0 else price
-                net = new_net
-        elif is_close:
-            if direction == 66:
-                if net < 0:
-                    close_vol = min(volume, -net)
-                    pnl = (avg_price - price) * close_vol * mult
-                    cum_pnl += pnl
-                    net += close_vol
-            elif direction == 83:
-                if net > 0:
-                    close_vol = min(volume, net)
-                    pnl = (price - avg_price) * close_vol * mult
-                    cum_pnl += pnl
-                    net -= close_vol
+    # 填充 open_net（第一个快照的净持仓）
+    for inst, records in data_dict.items():
+        if records:
+            first_record = records[0]
+            open_net = first_record["net_pos"]
+            for rec in records:
+                rec["open_net"] = open_net
 
-        pos_dict[inst]["net"] = net
-        pos_dict[inst]["avg_price"] = avg_price
-        pos_dict[inst]["cum_pnl"] = cum_pnl
-
-        current_time = row["datetime"]
-        floating_pnl = net * (price - avg_price) * mult
-        total_pnl = cum_pnl + floating_pnl
-        market_value = abs(net * price * mult)
-
-        records.append({
-            "time": current_time,
-            "instrument": inst,
-            "net_pos": net,
-            "market_value": market_value,
-            "cum_pnl": total_pnl,
-            "open_net": pos_dict[inst]["open_net"],
-            "price": price,
-        })
-
-    if not records:
-        return None
-
-    df_records = pd.DataFrame(records)
+    # 转为 DataFrame
     result = {}
-    for inst, group in df_records.groupby("instrument"):
-        group = group.sort_values("time").set_index("time")
-        resampled = group.resample("5T").last().dropna().reset_index()
-        result[inst] = resampled
-    return result
+    for inst, records in data_dict.items():
+        df_inst = pd.DataFrame(records)
+        if not df_inst.empty:
+            df_inst = df_inst.sort_values("time_idx")
+            result[inst] = df_inst
+
+    return result if result else None
 
 def draw_intraday_charts(
     product_configs: list,
@@ -1403,58 +1431,94 @@ def draw_intraday_charts(
     product_checks: dict,
     show_all: bool,
     contract_filter: str,
+    init_capital_map: dict,  # product_key -> init_capital
 ):
-    prev_date = get_previous_trade_date(current_date)
-
+    """
+    绘制三个日内图表，init_capital_map 用于将产品PnL转为百分比
+    """
     all_product_data = {}
     for cfg in product_configs:
         key = f"{cfg['market']}_{cfg['product']}"
         if not product_checks.get(key, True):
             continue
-        data = build_intraday_series(cfg, current_date, prev_date, static_df)
+        init_cap = init_capital_map.get(key, 1.0)  # 避免除零
+        data = build_intraday_series(cfg, current_date, static_df, init_cap)
         if data:
-            all_product_data[key] = data
+            all_product_data[key] = (data, init_cap)
 
     if not all_product_data:
-        st.info("没有可用的日内数据，请确认当日成交文件存在。")
+        st.info("没有可用的日内数据，请确认当日快照文件存在。")
         return
 
-    # ---- 图1: 产品 PnL ----
+    # ---- 图1: 产品 PnL（百分比） ----
     fig1 = go.Figure()
-    for product_key, instrument_data in all_product_data.items():
+    for product_key, (instrument_data, init_cap) in all_product_data.items():
         all_dfs = []
         for inst, df in instrument_data.items():
-            df_temp = df[["time", "cum_pnl"]].copy()
-            df_temp["instrument"] = inst
+            df_temp = df[["time_idx", "time_label", "cum_pnl"]].copy()
+            df_temp["time_idx"] = df_temp["time_idx"].astype(int)
             all_dfs.append(df_temp)
         if not all_dfs:
             continue
-        combined = pd.concat(all_dfs).sort_values("time")
-        grouped = combined.groupby("time")["cum_pnl"].sum().reset_index()
-        if grouped.empty:
-            continue
+        combined = pd.concat(all_dfs)
+        grouped = combined.groupby("time_idx").agg(
+            cum_pnl=("cum_pnl", "sum"),
+            time_label=("time_label", "first")
+        ).reset_index()
+        grouped["pnl_pct"] = (grouped["cum_pnl"] / init_cap) * 100
+        grouped = grouped.sort_values("time_idx")
         fig1.add_trace(go.Scatter(
-            x=grouped["time"],
-            y=grouped["cum_pnl"],
-            mode="lines",
+            x=grouped["time_idx"],
+            y=grouped["pnl_pct"],
+            mode="lines+markers",
             name=product_key,
+            marker=dict(size=4),
         ))
+
+    # 设置x轴刻度标签
+    all_time_idxs = []
+    for _, (instrument_data, _) in all_product_data.items():
+        for inst, df in instrument_data.items():
+            all_time_idxs.extend(df["time_idx"].tolist())
+    if all_time_idxs:
+        min_idx = min(all_time_idxs)
+        max_idx = max(all_time_idxs)
+        tick_vals = list(range(min_idx, max_idx+1, 30))
+        label_map = {}
+        for _, (instrument_data, _) in all_product_data.items():
+            for inst, df in instrument_data.items():
+                for _, row in df.iterrows():
+                    idx = int(row["time_idx"])
+                    label = row["time_label"]
+                    if idx not in label_map:
+                        label_map[idx] = label
+        ticktext = [label_map.get(v, "") for v in tick_vals if v in label_map]
+        tickvals = [v for v in tick_vals if v in label_map]
+        if not ticktext:
+            tickvals = sorted(all_time_idxs)[::30]
+            ticktext = [label_map.get(v, "") for v in tickvals]
+        fig1.update_xaxis(tickvals=tickvals, ticktext=ticktext, title="Time")
+    else:
+        fig1.update_xaxis(title="Time")
+
     fig1.update_layout(
-        title="Product PnL Over Time (Intraday)",
+        title="Product PnL (%) Over Time (Intraday)",
         xaxis_title="Time",
-        yaxis_title="Cumulative PnL (CNY)",
+        yaxis_title="PnL (%)",
         legend_title="Products",
         hovermode="x unified",
+        yaxis=dict(autorange=True, rangemode="tozero"),
     )
 
     # ---- 图2: 合约盈亏比例 ----
     all_contract_data = []
-    for product_key, instrument_data in all_product_data.items():
+    for product_key, (instrument_data, _) in all_product_data.items():
         for inst, df in instrument_data.items():
-            df_temp = df[["time", "cum_pnl", "market_value"]].copy()
+            df_temp = df[["time_idx", "time_label", "cum_pnl", "market_value"]].copy()
             df_temp["instrument"] = inst
             df_temp["product"] = product_key
             all_contract_data.append(df_temp)
+
     fig2 = go.Figure()
     if all_contract_data:
         combined2 = pd.concat(all_contract_data)
@@ -1467,28 +1531,36 @@ def draw_intraday_charts(
             axis=1
         )
         for inst, group in combined2.groupby("instrument"):
+            group = group.sort_values("time_idx")
             fig2.add_trace(go.Scatter(
-                x=group["time"],
+                x=group["time_idx"],
                 y=group["pnl_ratio"],
                 mode="lines",
                 name=inst,
                 line=dict(width=1),
+                hovertemplate="%{text}<extra></extra>",
+                text=group["time_label"],
             ))
+        if all_time_idxs:
+            fig2.update_xaxis(tickvals=tickvals, ticktext=ticktext, title="Time")
+        else:
+            fig2.update_xaxis(title="Time")
     fig2.update_layout(
         title="Contract PnL / Market Value",
         xaxis_title="Time",
         yaxis_title="PnL Ratio",
         legend_title="Contracts",
         hovermode="x unified",
+        yaxis=dict(autorange=True),
     )
 
     # ---- 图3: 手数比例 ----
     all_contract_data2 = []
-    for product_key, instrument_data in all_product_data.items():
+    for product_key, (instrument_data, _) in all_product_data.items():
         for inst, df in instrument_data.items():
             if "open_net" not in df.columns:
                 continue
-            df_temp = df[["time", "net_pos", "open_net"]].copy()
+            df_temp = df[["time_idx", "time_label", "net_pos", "open_net"]].copy()
             df_temp["instrument"] = inst
             df_temp["product"] = product_key
             all_contract_data2.append(df_temp)
@@ -1504,19 +1576,27 @@ def draw_intraday_charts(
             axis=1
         )
         for inst, group in combined3.groupby("instrument"):
+            group = group.sort_values("time_idx")
             fig3.add_trace(go.Scatter(
-                x=group["time"],
+                x=group["time_idx"],
                 y=group["pos_ratio"],
                 mode="lines",
                 name=inst,
                 line=dict(width=1),
+                hovertemplate="%{text}<extra></extra>",
+                text=group["time_label"],
             ))
+        if all_time_idxs:
+            fig3.update_xaxis(tickvals=tickvals, ticktext=ticktext, title="Time")
+        else:
+            fig3.update_xaxis(title="Time")
     fig3.update_layout(
         title="Position Change Ratio (Current - Open) / Open",
         xaxis_title="Time",
         yaxis_title="Position Ratio",
         legend_title="Contracts",
         hovermode="x unified",
+        yaxis=dict(autorange=True),
     )
 
     st.plotly_chart(fig1, use_container_width=True)
@@ -1524,7 +1604,7 @@ def draw_intraday_charts(
     st.plotly_chart(fig3, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# DASHBOARD MAIN（修改：增加侧边栏、静态信息加载、图表调用）
+# DASHBOARD MAIN（修改：增加 init_capital_map）
 # ─────────────────────────────────────────────
 
 ALERT_FILE = "alert_status_test.json"
@@ -1585,6 +1665,9 @@ def dashboard():
         global_file_errors: list[str]      = []
         shared_cache: dict[str, tuple]     = {}
 
+        # 新增：用于收集各产品 init_capital 的字典
+        init_capital_map = {}
+
         for cfg in PRODUCT_CONFIGS:
             ft   = cfg["market"]
             path = cfg["path"]
@@ -1635,6 +1718,10 @@ def dashboard():
                 })
                 detail_df     = None
                 detail_status = {"has_warning": True, "has_risk": False}
+
+            # 保存 init_capital
+            key = f"{ft}_{name}"
+            init_capital_map[key] = row.get("init_capital", 0.0)
 
             summary_rows.append(row)
             if detail_df is not None:
@@ -1854,6 +1941,7 @@ def dashboard():
                 product_checks,
                 show_all,
                 contract_input,
+                init_capital_map,   # 传入收集的资金字典
             )
 
     except Exception as outer_err:
