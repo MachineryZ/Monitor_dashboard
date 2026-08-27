@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import math
 import requests
@@ -1270,28 +1271,20 @@ def build_intraday_series(
     """
     扫描产品路径下的 position_data_YYYYMMDD_YYYYMMDD_HH:MM:SS.csv 文件，
     构建每个合约的日内时序（时间→交易分钟索引，净持仓，市值，累计盈亏）。
-    返回 {instrument: DataFrame}，DataFrame 包含列：
-        'time_idx'   : 从夜盘21:00开始的交易分钟索引（连续整数）
-        'time_label' : 显示时间标签（如 '21:05'）
-        'net_pos'    : 净持仓（多头-空头）
-        'market_value' : 市值（abs(net_pos) * price * multiplier）
-        'cum_pnl'    : 累计盈亏（close_profit + position_profit）
-        'open_net'   : 开盘净持仓（取第一个快照的净持仓）
-        'price'      : 使用价格（优先从价格缓存获取，否则用pre_settlement_price）
     """
     path = cfg["path"]
-    # 获取所有 position_data_ 文件
     files = [f for f in os.listdir(path) if f.startswith("position_data_") and f.endswith(".csv")]
     if not files:
         return None
 
-    # 修改点 1：使用 datetime.datetime.strptime
+    # 使用正则解析文件名
+    import re
     def parse_time_from_filename(fname: str):
-        base = fname.replace('.csv', '')
-        parts = base.split('_')
-        if len(parts) >= 5:
-            date_str = parts[2]   # 第二个字段是日期
-            time_str = parts[4]   # 第五个字段是时间
+        pattern = r'position_data_(\d{8})_(\d{8})_(\d{2}:\d{2}:\d{2})\.csv'
+        match = re.match(pattern, fname)
+        if match:
+            date_str = match.group(1)
+            time_str = match.group(3)
             try:
                 return datetime.datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
             except ValueError:
@@ -1303,7 +1296,7 @@ def build_intraday_series(
         dt = parse_time_from_filename(f)
         if dt is not None:
             timed_files.append((dt, os.path.join(path, f)))
-    timed_files.sort(key=lambda x: x[0])  # 按时间排序
+    timed_files.sort(key=lambda x: x[0])
 
     if not timed_files:
         return None
@@ -1317,10 +1310,8 @@ def build_intraday_series(
             if inst:
                 mult_map[inst] = float(mult)
 
-    # 数据字典
     data_dict = {}
 
-    # 定义交易时段（用于计算交易分钟索引）
     def get_trade_minute_index(dt: datetime.datetime, base_date: datetime.datetime) -> int:
         start = base_date.replace(hour=21, minute=0, second=0, microsecond=0)
         minutes = 0
@@ -1349,7 +1340,6 @@ def build_intraday_series(
             cur += timedelta(minutes=1)
         return minutes
 
-    # 遍历所有快照
     for dt, fpath in timed_files:
         df, err = safe_read_csv(fpath)
         if err or df is None or df.empty:
@@ -1371,7 +1361,6 @@ def build_intraday_series(
             close_profit = long_rows["close_profit"].sum() + short_rows["close_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
             position_profit = long_rows["position_profit"].sum() + short_rows["position_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
             total_pnl = close_profit + position_profit
-            # 若净持仓和盈亏均为0，跳过该合约（避免大量零值点）
             if net == 0 and total_pnl == 0:
                 continue
             price = get_price(inst)
@@ -1391,7 +1380,6 @@ def build_intraday_series(
         if not inst_net:
             continue
 
-        # 修改点 2：使用 datetime.datetime.combine
         base = datetime.datetime.combine(
             (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
             datetime.time(21, 0)
@@ -1412,7 +1400,6 @@ def build_intraday_series(
                 "price": inst_price.get(inst, 0),
             })
 
-    # 填充 open_net（第一个快照的净持仓）
     for inst, records in data_dict.items():
         if records:
             first_record = records[0]
@@ -1420,7 +1407,6 @@ def build_intraday_series(
             for rec in records:
                 rec["open_net"] = open_net
 
-    # 转为 DataFrame
     result = {}
     for inst, records in data_dict.items():
         df_inst = pd.DataFrame(records)
