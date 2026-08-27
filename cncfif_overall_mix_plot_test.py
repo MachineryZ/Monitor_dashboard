@@ -1285,7 +1285,7 @@ def build_intraday_series(
     if not files:
         return None
 
-    # ---- 修改点：更稳健的解析函数 ----
+    # 修改点 1：使用 datetime.datetime.strptime
     def parse_time_from_filename(fname: str):
         base = fname.replace('.csv', '')
         parts = base.split('_')
@@ -1293,7 +1293,7 @@ def build_intraday_series(
             date_str = parts[2]   # 第二个字段是日期
             time_str = parts[4]   # 第五个字段是时间
             try:
-                return datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
+                return datetime.datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
             except ValueError:
                 return None
         return None
@@ -1321,7 +1321,7 @@ def build_intraday_series(
     data_dict = {}
 
     # 定义交易时段（用于计算交易分钟索引）
-    def get_trade_minute_index(dt: datetime, base_date: datetime) -> int:
+    def get_trade_minute_index(dt: datetime.datetime, base_date: datetime.datetime) -> int:
         start = base_date.replace(hour=21, minute=0, second=0, microsecond=0)
         minutes = 0
         sessions = [
@@ -1391,7 +1391,11 @@ def build_intraday_series(
         if not inst_net:
             continue
 
-        base = datetime.combine((datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(), datetime.time(21, 0))
+        # 修改点 2：使用 datetime.datetime.combine
+        base = datetime.datetime.combine(
+            (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
+            datetime.time(21, 0)
+        )
         time_idx = get_trade_minute_index(dt, base)
         time_label = dt.strftime("%H:%M")
 
