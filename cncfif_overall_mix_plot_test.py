@@ -1508,7 +1508,6 @@ def draw_intraday_charts(
             marker=dict(size=4),
         ))
 
-    # 使用 update_layout 设置 x 轴
     xaxis_dict = dict(title="Time")
     if tickvals and ticktext:
         xaxis_dict.update(tickvals=tickvals, ticktext=ticktext)
