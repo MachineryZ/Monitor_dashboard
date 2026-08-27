@@ -13,7 +13,7 @@ import json
 
 # ── 新增：Plotly 用于图表 ──
 import plotly.graph_objects as go
-from datetime import timedelta  # 新增导入
+from datetime import timedelta
 
 # ── RWP API 配置 ──────────────────────────────────────
 RWP_CREDENTIALS = {
@@ -1285,16 +1285,18 @@ def build_intraday_series(
     if not files:
         return None
 
-    # 解析文件名中的更新时间，排序
-    def parse_time_from_filename(fname: str) -> datetime:
-        # 格式: position_data_20260826_20260826_09:53:11.csv
-        parts = fname.replace(".csv", "").split("_")
+    # ---- 修改点：更稳健的解析函数 ----
+    def parse_time_from_filename(fname: str):
+        base = fname.replace('.csv', '')
+        parts = base.split('_')
         if len(parts) >= 5:
-            date_str = parts[1]  # 20260826
-            time_str = parts[3] + ":" + parts[4] + ":" + parts[5]  # 09:53:11
-            return datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
-        else:
-            return None
+            date_str = parts[2]   # 第二个字段是日期
+            time_str = parts[4]   # 第五个字段是时间
+            try:
+                return datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
+            except ValueError:
+                return None
+        return None
 
     timed_files = []
     for f in files:
