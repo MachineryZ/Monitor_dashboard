@@ -1604,6 +1604,7 @@ def draw_intraday_charts(
         hovermode="x unified",
     )
 
+    # 修改点：将 use_container_width=True 替换为 width="stretch"
     st.plotly_chart(fig1, width="stretch")
     st.plotly_chart(fig2, width="stretch")
     st.plotly_chart(fig3, width="stretch")
