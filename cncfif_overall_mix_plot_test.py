@@ -1461,8 +1461,12 @@ def draw_intraday_charts(
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
 
-    # ---- 生成固定的每5分钟刻度（仅交易时段） ----
-    def generate_tick_labels(current_date, step=5):
+    # ---- 生成固定的每5分钟刻度线，标签每3个显示一个（即每15分钟） ----
+    def generate_tick_labels(current_date, tick_step=5, label_interval=3):
+        """
+        tick_step: 刻度间隔（分钟），固定为5
+        label_interval: 每几个刻度显示一个标签（例如3表示每15分钟显示一个）
+        """
         base = datetime.datetime.combine(
             (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
             datetime.time(21, 0)
@@ -1495,14 +1499,19 @@ def draw_intraday_charts(
                         in_session = True
                         break
             if in_session:
-                if cnt % step == 0:
+                # 刻度线每 tick_step 分钟一个
+                if cnt % tick_step == 0:
                     tick_vals.append(cnt)
-                    ticktext.append(cur.strftime("%H:%M"))
+                    # 标签只在每 label_interval 个刻度显示
+                    if cnt % (tick_step * label_interval) == 0:
+                        ticktext.append(cur.strftime("%H:%M"))
+                    else:
+                        ticktext.append("")  # 空字符串，不显示标签
                 cnt += 1
             cur += timedelta(minutes=1)
         return tick_vals, ticktext
 
-    tick_vals, ticktext = generate_tick_labels(current_date, step=5)
+    tick_vals, ticktext = generate_tick_labels(current_date, tick_step=5, label_interval=3)
 
     # ---- 图1: 产品 PnL（百分比，全局汇总） ----
     fig1 = go.Figure()
@@ -1531,7 +1540,12 @@ def draw_intraday_charts(
             text=grouped["time_label"],
         ))
 
-    xaxis_dict = dict(title="Time", tickvals=tick_vals, ticktext=ticktext)
+    xaxis_dict = dict(
+        title="Time",
+        tickvals=tick_vals,
+        ticktext=ticktext,
+        tickangle=-45,
+    )
     fig1.update_layout(
         title="Product PnL (%) Over Time (Intraday)",
         xaxis=xaxis_dict,
@@ -1576,7 +1590,12 @@ def draw_intraday_charts(
                 hovertemplate="时间: %{text}<br>盈亏比例: %{y:.4f}<extra>%{fullData.name}</extra>",
                 text=group["time_label"],
             ))
-        xaxis_dict2 = dict(title="Time", tickvals=tick_vals, ticktext=ticktext)
+        xaxis_dict2 = dict(
+            title="Time",
+            tickvals=tick_vals,
+            ticktext=ticktext,
+            tickangle=-45,
+        )
         fig2.update_layout(
             title="Contract PnL / Market Value (All Products)",
             xaxis=xaxis_dict2,
@@ -1622,7 +1641,12 @@ def draw_intraday_charts(
                 hovertemplate="时间: %{text}<br>手数比例: %{y:.2f}<extra>%{fullData.name}</extra>",
                 text=group["time_label"],
             ))
-        xaxis_dict3 = dict(title="Time", tickvals=tick_vals, ticktext=ticktext)
+        xaxis_dict3 = dict(
+            title="Time",
+            tickvals=tick_vals,
+            ticktext=ticktext,
+            tickangle=-45,
+        )
         fig3.update_layout(
             title="Position Ratio (Current/Open) - All Products",
             xaxis=xaxis_dict3,
