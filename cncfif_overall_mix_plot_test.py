@@ -1461,12 +1461,12 @@ def draw_intraday_charts(
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
 
-    # ---- 生成固定间隔的标签和网格线 ----
-    def generate_tick_labels(current_date, label_interval=3, tick_step=5):
+    # ---- 生成所有交易时段的 5 分钟刻度，标签每 30 分钟显示一个 ----
+    def generate_tick_labels(current_date, tick_step=5, label_interval=6):
         """
         tick_step: 网格线间隔（分钟），固定为5
-        label_interval: 每几个 tick_step 显示一个标签（例如3表示每15分钟显示一个）
-        返回 (tick_vals, ticktext, tick0, dtick)
+        label_interval: 每几个 tick_step 显示一个标签（例如6表示每30分钟显示一个）
+        返回 (all_tick_vals, ticktext)
         """
         base = datetime.datetime.combine(
             (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
@@ -1485,8 +1485,8 @@ def draw_intraday_charts(
         )
         cur = base
         cnt = 0
-        tick_vals = []
-        ticktext = []
+        all_tick_vals = []   # 所有 5 分钟位置（用于网格线）
+        ticktext = []       # 对应位置的标签（空字符串表示不显示）
         while cur <= end_time:
             in_session = False
             cur_time = cur.time()
@@ -1500,16 +1500,18 @@ def draw_intraday_charts(
                         in_session = True
                         break
             if in_session:
-                # 标签位置：每 label_interval * tick_step 分钟一个
-                if cnt % (tick_step * label_interval) == 0:
-                    tick_vals.append(cnt)
-                    ticktext.append(cur.strftime("%H:%M"))
+                if cnt % tick_step == 0:
+                    all_tick_vals.append(cnt)
+                    # 标签仅在每 label_interval 个刻度出现
+                    if cnt % (tick_step * label_interval) == 0:
+                        ticktext.append(cur.strftime("%H:%M"))
+                    else:
+                        ticktext.append("")   # 空字符串，不显示标签
                 cnt += 1
             cur += timedelta(minutes=1)
-        # tick0 = 0（第一个交易分钟索引），dtick = tick_step（5分钟）
-        return tick_vals, ticktext, 0, tick_step
+        return all_tick_vals, ticktext
 
-    tick_vals, ticktext, tick0, dtick = generate_tick_labels(current_date, label_interval=3, tick_step=5)
+    all_tick_vals, ticktext = generate_tick_labels(current_date, tick_step=5, label_interval=6)
 
     # ---- 图1: 产品 PnL（百分比，全局汇总） ----
     fig1 = go.Figure()
@@ -1541,18 +1543,12 @@ def draw_intraday_charts(
     xaxis_dict = dict(
         title="Time",
         tickmode='array',
-        tickvals=tick_vals,
+        tickvals=all_tick_vals,
         ticktext=ticktext,
         tickangle=-45,
-        showgrid=False,  # 隐藏主网格线，使用次要网格线
-        minor=dict(
-            dtick=dtick,
-            tick0=tick0,
-            showgrid=True,
-            gridcolor='lightgray',
-            gridwidth=0.5,
-            ticks='',  # 不显示次要刻度线，只保留网格
-        ),
+        showgrid=True,       # 显示网格线，将出现在 all_tick_vals 的位置（仅交易时段）
+        gridcolor='lightgray',
+        gridwidth=0.5,
     )
     fig1.update_layout(
         title="Product PnL (%) Over Time (Intraday)",
@@ -1598,18 +1594,12 @@ def draw_intraday_charts(
         xaxis_dict2 = dict(
             title="Time",
             tickmode='array',
-            tickvals=tick_vals,
+            tickvals=all_tick_vals,
             ticktext=ticktext,
             tickangle=-45,
-            showgrid=False,
-            minor=dict(
-                dtick=dtick,
-                tick0=tick0,
-                showgrid=True,
-                gridcolor='lightgray',
-                gridwidth=0.5,
-                ticks='',
-            ),
+            showgrid=True,
+            gridcolor='lightgray',
+            gridwidth=0.5,
         )
         fig2.update_layout(
             title="Contract PnL / Market Value (All Products)",
@@ -1659,18 +1649,12 @@ def draw_intraday_charts(
         xaxis_dict3 = dict(
             title="Time",
             tickmode='array',
-            tickvals=tick_vals,
+            tickvals=all_tick_vals,
             ticktext=ticktext,
             tickangle=-45,
-            showgrid=False,
-            minor=dict(
-                dtick=dtick,
-                tick0=tick0,
-                showgrid=True,
-                gridcolor='lightgray',
-                gridwidth=0.5,
-                ticks='',
-            ),
+            showgrid=True,
+            gridcolor='lightgray',
+            gridwidth=0.5,
         )
         fig3.update_layout(
             title="Position Ratio (Current/Open) - All Products",
