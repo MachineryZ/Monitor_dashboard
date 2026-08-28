@@ -1441,10 +1441,11 @@ def draw_intraday_charts(
     init_capital_map: dict,
 ):
     """
-    绘制日内图表：
-    - 图1：产品 PnL（百分比，全局汇总）
-    - 图2：每个产品的合约 PnL / Market Value（按产品独立）
-    - 图3：每个产品的合约净持仓 / 开盘持仓（按产品独立）
+    绘制3个全局日内图表：
+    - 图1：产品 PnL（百分比）
+    - 图2：所有产品的合约 PnL / Market Value（按产品区分曲线名称）
+    - 图3：所有产品的合约手数比例（按产品区分曲线名称）
+    产品显示由 product_checks 控制，合约过滤由 show_all / contract_filter 控制。
     """
     all_product_data = {}
     for cfg in product_configs:
@@ -1460,44 +1461,48 @@ def draw_intraday_charts(
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
 
-    # 收集所有时间索引用于全局刻度（图1也使用）
-    all_time_idxs = []
-    for _, (instrument_data, _, _, _) in all_product_data.items():
-        for inst, df in instrument_data.items():
-            all_time_idxs.extend(df["time_idx"].tolist())
-    
-    # 生成每5分钟的刻度标签（仅交易时段）
-    # 我们基于数据中的实际时间标签构建刻度映射，步长为5分钟
-    if all_time_idxs:
-        min_idx = min(all_time_idxs)
-        max_idx = max(all_time_idxs)
-        # 步长为5（分钟）
-        tick_step = 5
-        tick_vals = list(range(min_idx, max_idx+1, tick_step))
-        # 构建时间标签映射（从数据中提取每个索引对应的时间字符串）
-        label_map = {}
-        for _, (instrument_data, _, _, _) in all_product_data.items():
-            for inst, df in instrument_data.items():
-                for _, row in df.iterrows():
-                    idx = int(row["time_idx"])
-                    label = row["time_label"]
-                    if idx not in label_map:
-                        label_map[idx] = label
-        # 生成刻度标签
+    # ---- 生成固定的每5分钟刻度（仅交易时段） ----
+    def generate_tick_labels(current_date, step=5):
+        base = datetime.datetime.combine(
+            (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
+            datetime.time(21, 0)
+        )
+        sessions = [
+            (datetime.time(21, 0), datetime.time(23, 59), False),
+            (datetime.time(0, 0), datetime.time(2, 30), True),
+            (datetime.time(9, 0), datetime.time(10, 15), False),
+            (datetime.time(10, 30), datetime.time(11, 30), False),
+            (datetime.time(13, 30), datetime.time(15, 0), False),
+        ]
+        end_time = datetime.datetime.combine(
+            datetime.datetime.strptime(str(current_date), "%Y%m%d").date(),
+            datetime.time(15, 0)
+        )
+        cur = base
+        cnt = 0
+        tick_vals = []
         ticktext = []
-        tickvals_filtered = []
-        for v in tick_vals:
-            if v in label_map:
-                ticktext.append(label_map[v])
-                tickvals_filtered.append(v)
-        # 如果过滤后太少，则用所有数据中的索引按步长取
-        if len(ticktext) < 3:
-            all_sorted = sorted(all_time_idxs)
-            tickvals_filtered = all_sorted[::tick_step]
-            ticktext = [label_map.get(v, "") for v in tickvals_filtered]
-    else:
-        tickvals_filtered = None
-        ticktext = None
+        while cur <= end_time:
+            in_session = False
+            cur_time = cur.time()
+            for s_start, s_end, cross in sessions:
+                if not cross:
+                    if s_start <= cur_time <= s_end:
+                        in_session = True
+                        break
+                else:
+                    if cur_time <= s_end or cur_time >= s_start:
+                        in_session = True
+                        break
+            if in_session:
+                if cnt % step == 0:
+                    tick_vals.append(cnt)
+                    ticktext.append(cur.strftime("%H:%M"))
+                cnt += 1
+            cur += timedelta(minutes=1)
+        return tick_vals, ticktext
+
+    tick_vals, ticktext = generate_tick_labels(current_date, step=5)
 
     # ---- 图1: 产品 PnL（百分比，全局汇总） ----
     fig1 = go.Figure()
@@ -1526,9 +1531,7 @@ def draw_intraday_charts(
             text=grouped["time_label"],
         ))
 
-    xaxis_dict = dict(title="Time")
-    if tickvals_filtered and ticktext:
-        xaxis_dict.update(tickvals=tickvals_filtered, ticktext=ticktext)
+    xaxis_dict = dict(title="Time", tickvals=tick_vals, ticktext=ticktext)
     fig1.update_layout(
         title="Product PnL (%) Over Time (Intraday)",
         xaxis=xaxis_dict,
@@ -1538,101 +1541,98 @@ def draw_intraday_charts(
     )
     st.plotly_chart(fig1, width="stretch")
 
-    # ---- 图2 & 图3: 每个产品独立绘制 ----
+    # ---- 图2: 合约 PnL / Market Value（全局，所有产品） ----
+    all_contract_data = []
     for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
-        st.markdown(f"#### {product_key} ({broker})")
-
-        # ---- 图2: 合约 PnL / Market Value（该产品） ----
-        all_contract_data = []
         for inst, df in instrument_data.items():
             df_temp = df[["time_idx", "time_label", "cum_pnl", "market_value"]].copy()
             df_temp["instrument"] = inst
+            df_temp["product_key"] = product_key
             all_contract_data.append(df_temp)
-        
-        if all_contract_data:
-            combined2 = pd.concat(all_contract_data)
-            # 应用合约过滤（全局）
-            if not show_all and contract_filter.strip():
-                contract_list = [c.strip() for c in contract_filter.split() if c.strip()]
-                if contract_list:
-                    combined2 = combined2[combined2["instrument"].isin(contract_list)]
-            combined2["pnl_ratio"] = combined2.apply(
-                lambda row: row["cum_pnl"] / row["market_value"] if row["market_value"] != 0 else 0,
-                axis=1
-            )
-            fig2 = go.Figure()
-            for inst, group in combined2.groupby("instrument"):
-                group = group.sort_values("time_idx")
-                fig2.add_trace(go.Scatter(
-                    x=group["time_idx"],
-                    y=group["pnl_ratio"],
-                    mode="lines",
-                    name=inst,
-                    line=dict(width=1),
-                    hovertemplate="时间: %{text}<br>盈亏比例: %{y:.4f}<extra></extra>",
-                    text=group["time_label"],
-                ))
-            xaxis_dict2 = dict(title="Time")
-            if tickvals_filtered and ticktext:
-                xaxis_dict2.update(tickvals=tickvals_filtered, ticktext=ticktext)
-            fig2.update_layout(
-                title=f"Contract PnL / Market Value - {product_key}",
-                xaxis=xaxis_dict2,
-                yaxis=dict(title="PnL Ratio", autorange=True),
-                legend_title="Contracts",
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig2, width="stretch")
-        else:
-            st.info(f"产品 {product_key} 无合约数据")
 
-        # ---- 图3: 手数比例（该产品） ----
-        all_contract_data2 = []
+    fig2 = go.Figure()
+    if all_contract_data:
+        combined2 = pd.concat(all_contract_data)
+        # 合约过滤（全局）
+        if not show_all and contract_filter.strip():
+            contract_list = [c.strip() for c in contract_filter.split() if c.strip()]
+            if contract_list:
+                combined2 = combined2[combined2["instrument"].isin(contract_list)]
+        combined2["pnl_ratio"] = combined2.apply(
+            lambda row: row["cum_pnl"] / row["market_value"] if row["market_value"] != 0 else 0,
+            axis=1
+        )
+        # 按 product_key + instrument 分组，曲线名称带产品标识
+        combined2["trace_name"] = combined2["product_key"] + "_" + combined2["instrument"]
+        for (prod_key, inst), group in combined2.groupby(["product_key", "instrument"]):
+            group = group.sort_values("time_idx")
+            trace_name = f"{prod_key}_{inst}"
+            fig2.add_trace(go.Scatter(
+                x=group["time_idx"],
+                y=group["pnl_ratio"],
+                mode="lines",
+                name=trace_name,
+                line=dict(width=1),
+                hovertemplate="时间: %{text}<br>盈亏比例: %{y:.4f}<extra>%{fullData.name}</extra>",
+                text=group["time_label"],
+            ))
+        xaxis_dict2 = dict(title="Time", tickvals=tick_vals, ticktext=ticktext)
+        fig2.update_layout(
+            title="Contract PnL / Market Value (All Products)",
+            xaxis=xaxis_dict2,
+            yaxis=dict(title="PnL Ratio", autorange=True),
+            legend_title="Contracts (Product_Instrument)",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig2, width="stretch")
+    else:
+        st.info("无合约数据可显示")
+
+    # ---- 图3: 手数比例（全局，所有产品） ----
+    all_contract_data2 = []
+    for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
         for inst, df in instrument_data.items():
             if "open_net" not in df.columns:
                 continue
             df_temp = df[["time_idx", "time_label", "net_pos", "open_net"]].copy()
             df_temp["instrument"] = inst
+            df_temp["product_key"] = product_key
             all_contract_data2.append(df_temp)
-        
-        if all_contract_data2:
-            combined3 = pd.concat(all_contract_data2)
-            if not show_all and contract_filter.strip():
-                contract_list = [c.strip() for c in contract_filter.split() if c.strip()]
-                if contract_list:
-                    combined3 = combined3[combined3["instrument"].isin(contract_list)]
-            # 修改：计算 current / open
-            combined3["pos_ratio"] = combined3.apply(
-                lambda row: row["net_pos"] / row["open_net"] if row["open_net"] != 0 else 0,
-                axis=1
-            )
-            fig3 = go.Figure()
-            for inst, group in combined3.groupby("instrument"):
-                group = group.sort_values("time_idx")
-                fig3.add_trace(go.Scatter(
-                    x=group["time_idx"],
-                    y=group["pos_ratio"],
-                    mode="lines",
-                    name=inst,
-                    line=dict(width=1),
-                    hovertemplate="时间: %{text}<br>手数比例: %{y:.2f}<extra></extra>",
-                    text=group["time_label"],
-                ))
-            xaxis_dict3 = dict(title="Time")
-            if tickvals_filtered and ticktext:
-                xaxis_dict3.update(tickvals=tickvals_filtered, ticktext=ticktext)
-            fig3.update_layout(
-                title=f"Position Ratio (Current/Open) - {product_key}",
-                xaxis=xaxis_dict3,
-                yaxis=dict(title="Position Ratio", autorange=True),
-                legend_title="Contracts",
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig3, width="stretch")
-        else:
-            st.info(f"产品 {product_key} 无开盘持仓数据")
 
-        st.markdown("---")
+    fig3 = go.Figure()
+    if all_contract_data2:
+        combined3 = pd.concat(all_contract_data2)
+        if not show_all and contract_filter.strip():
+            contract_list = [c.strip() for c in contract_filter.split() if c.strip()]
+            if contract_list:
+                combined3 = combined3[combined3["instrument"].isin(contract_list)]
+        combined3["pos_ratio"] = combined3.apply(
+            lambda row: row["net_pos"] / row["open_net"] if row["open_net"] != 0 else 0,
+            axis=1
+        )
+        for (prod_key, inst), group in combined3.groupby(["product_key", "instrument"]):
+            group = group.sort_values("time_idx")
+            trace_name = f"{prod_key}_{inst}"
+            fig3.add_trace(go.Scatter(
+                x=group["time_idx"],
+                y=group["pos_ratio"],
+                mode="lines",
+                name=trace_name,
+                line=dict(width=1),
+                hovertemplate="时间: %{text}<br>手数比例: %{y:.2f}<extra>%{fullData.name}</extra>",
+                text=group["time_label"],
+            ))
+        xaxis_dict3 = dict(title="Time", tickvals=tick_vals, ticktext=ticktext)
+        fig3.update_layout(
+            title="Position Ratio (Current/Open) - All Products",
+            xaxis=xaxis_dict3,
+            yaxis=dict(title="Position Ratio", autorange=True),
+            legend_title="Contracts (Product_Instrument)",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig3, width="stretch")
+    else:
+        st.info("无开盘持仓数据可显示")
 
 
 # ─────────────────────────────────────────────
@@ -1657,7 +1657,7 @@ def dashboard():
     # ── 侧边栏控件 ──
     with st.sidebar:
         st.header("Chart Controls")
-        st.subheader("Product PnL Display")
+        st.subheader("Product Display")
         product_checks = {}
         for cfg in PRODUCT_CONFIGS:
             label = f"{cfg['market']}_{cfg['product']}"
