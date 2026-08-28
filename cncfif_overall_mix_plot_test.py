@@ -1499,10 +1499,9 @@ def draw_intraday_charts(
                         in_session = True
                         break
             if in_session:
-                # 刻度线每 tick_step 分钟一个
                 if cnt % tick_step == 0:
                     tick_vals.append(cnt)
-                    # 标签只在每 label_interval 个刻度显示
+                    # 只在每 label_interval 个刻度显示标签
                     if cnt % (tick_step * label_interval) == 0:
                         ticktext.append(cur.strftime("%H:%M"))
                     else:
@@ -1545,6 +1544,8 @@ def draw_intraday_charts(
         tickvals=tick_vals,
         ticktext=ticktext,
         tickangle=-45,
+        type='linear',          # 强制线性轴，防止被当作日期
+        tickmode='array',       # 显式使用数组模式
     )
     fig1.update_layout(
         title="Product PnL (%) Over Time (Intraday)",
@@ -1567,7 +1568,6 @@ def draw_intraday_charts(
     fig2 = go.Figure()
     if all_contract_data:
         combined2 = pd.concat(all_contract_data)
-        # 合约过滤（全局）
         if not show_all and contract_filter.strip():
             contract_list = [c.strip() for c in contract_filter.split() if c.strip()]
             if contract_list:
@@ -1576,8 +1576,6 @@ def draw_intraday_charts(
             lambda row: row["cum_pnl"] / row["market_value"] if row["market_value"] != 0 else 0,
             axis=1
         )
-        # 按 product_key + instrument 分组，曲线名称带产品标识
-        combined2["trace_name"] = combined2["product_key"] + "_" + combined2["instrument"]
         for (prod_key, inst), group in combined2.groupby(["product_key", "instrument"]):
             group = group.sort_values("time_idx")
             trace_name = f"{prod_key}_{inst}"
@@ -1595,6 +1593,8 @@ def draw_intraday_charts(
             tickvals=tick_vals,
             ticktext=ticktext,
             tickangle=-45,
+            type='linear',
+            tickmode='array',
         )
         fig2.update_layout(
             title="Contract PnL / Market Value (All Products)",
@@ -1646,6 +1646,8 @@ def draw_intraday_charts(
             tickvals=tick_vals,
             ticktext=ticktext,
             tickangle=-45,
+            type='linear',
+            tickmode='array',
         )
         fig3.update_layout(
             title="Position Ratio (Current/Open) - All Products",
@@ -1657,7 +1659,6 @@ def draw_intraday_charts(
         st.plotly_chart(fig3, width="stretch")
     else:
         st.info("无开盘持仓数据可显示")
-
 
 # ─────────────────────────────────────────────
 # DASHBOARD MAIN（修改：增加 init_capital_map）
