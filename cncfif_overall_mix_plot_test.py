@@ -1461,7 +1461,13 @@ def draw_intraday_charts(
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
 
+    # ---- 生成所有交易时段的 5 分钟刻度，标签每 30 分钟显示一个 ----
     def generate_tick_labels(current_date, tick_step=5, label_interval=6):
+        """
+        tick_step: 网格线间隔（分钟），固定为5
+        label_interval: 每几个 tick_step 显示一个标签（例如6表示每30分钟显示一个）
+        返回 (all_tick_vals, ticktext)
+        """
         base = datetime.datetime.combine(
             (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
             datetime.time(21, 0)
@@ -1485,27 +1491,34 @@ def draw_intraday_charts(
             in_session = False
             cur_time = cur.time()
             for s_start, s_end, cross in sessions:
-                if cross:
-                    # 跨天时段
-                    if cur_time >= s_start or cur_time <= s_end:
+                if not cross:
+                    if s_start <= cur_time <= s_end:
                         in_session = True
                         break
                 else:
-                    if s_start <= cur_time <= s_end:
+                    if cur_time <= s_end or cur_time >= s_start:
                         in_session = True
                         break
             if in_session:
                 if cnt % tick_step == 0:
                     all_tick_vals.append(cnt)
+                    # 仅在每 label_interval 个刻度时显示标签
                     if cnt % (tick_step * label_interval) == 0:
                         ticktext.append(cur.strftime("%H:%M"))
                     else:
-                        ticktext.append("")
+                        ticktext.append("")   # 空字符串，不显示标签
                 cnt += 1
             cur += timedelta(minutes=1)
         return all_tick_vals, ticktext
 
     all_tick_vals, ticktext = generate_tick_labels(current_date, tick_step=5, label_interval=6)
+
+    if not all_tick_vals:
+        st.error("⚠️ 无法生成交易时段刻度，请检查系统日期。")
+        return
+
+    # 设置 x 轴范围：从第一个刻度到最后一个刻度
+    xaxis_range = [min(all_tick_vals), max(all_tick_vals)]
 
     # ---- 图1: 产品 PnL（百分比，全局汇总） ----
     fig1 = go.Figure()
@@ -1540,9 +1553,11 @@ def draw_intraday_charts(
         tickvals=all_tick_vals,
         ticktext=ticktext,
         tickangle=-45,
-        showgrid=True,       # 显示网格线，将出现在 all_tick_vals 的位置（仅交易时段）
+        range=xaxis_range,          # 固定范围，去掉非交易时段
+        showgrid=True,
         gridcolor='lightgray',
         gridwidth=0.5,
+        zeroline=False,
     )
     fig1.update_layout(
         title="Product PnL (%) Over Time (Intraday)",
@@ -1591,9 +1606,11 @@ def draw_intraday_charts(
             tickvals=all_tick_vals,
             ticktext=ticktext,
             tickangle=-45,
+            range=xaxis_range,
             showgrid=True,
             gridcolor='lightgray',
             gridwidth=0.5,
+            zeroline=False,
         )
         fig2.update_layout(
             title="Contract PnL / Market Value (All Products)",
@@ -1646,9 +1663,11 @@ def draw_intraday_charts(
             tickvals=all_tick_vals,
             ticktext=ticktext,
             tickangle=-45,
+            range=xaxis_range,
             showgrid=True,
             gridcolor='lightgray',
             gridwidth=0.5,
+            zeroline=False,
         )
         fig3.update_layout(
             title="Position Ratio (Current/Open) - All Products",
