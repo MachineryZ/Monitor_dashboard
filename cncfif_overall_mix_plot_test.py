@@ -1472,6 +1472,13 @@ def draw_intraday_charts(
             (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
             datetime.time(21, 0)
         )
+        sessions = [
+            (datetime.time(21, 0), datetime.time(23, 59), False),
+            (datetime.time(0, 0), datetime.time(2, 30), True),
+            (datetime.time(9, 0), datetime.time(10, 15), False),
+            (datetime.time(10, 30), datetime.time(11, 30), False),
+            (datetime.time(13, 30), datetime.time(15, 0), False),
+        ]
         end_time = datetime.datetime.combine(
             datetime.datetime.strptime(str(current_date), "%Y%m%d").date(),
             datetime.time(15, 0)
@@ -1481,13 +1488,17 @@ def draw_intraday_charts(
         all_tick_vals = []
         ticktext = []
         while cur <= end_time:
-            cur_time = cur.time()
             in_session = False
-            # 使用全局 COMMODITY_SESSIONS 并调用 _time_in_session 判断
-            for s_start, s_end, cross in COMMODITY_SESSIONS:
-                if _time_in_session(cur_time, s_start, s_end, cross):
-                    in_session = True
-                    break
+            cur_time = cur.time()
+            for s_start, s_end, cross in sessions:
+                if not cross:
+                    if s_start <= cur_time <= s_end:
+                        in_session = True
+                        break
+                else:
+                    if cur_time <= s_end or cur_time >= s_start:
+                        in_session = True
+                        break
             if in_session:
                 if cnt % tick_step == 0:
                     all_tick_vals.append(cnt)
