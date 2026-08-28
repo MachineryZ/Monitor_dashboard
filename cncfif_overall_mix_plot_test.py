@@ -1461,11 +1461,12 @@ def draw_intraday_charts(
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
 
-    # ---- 生成固定的每5分钟刻度线，标签每3个显示一个（即每15分钟） ----
-    def generate_tick_labels(current_date, tick_step=5, label_interval=3):
+    # ---- 生成固定间隔的标签和网格线 ----
+    def generate_tick_labels(current_date, label_interval=3, tick_step=5):
         """
-        tick_step: 刻度间隔（分钟），固定为5
-        label_interval: 每几个刻度显示一个标签（例如3表示每15分钟显示一个）
+        tick_step: 网格线间隔（分钟），固定为5
+        label_interval: 每几个 tick_step 显示一个标签（例如3表示每15分钟显示一个）
+        返回 (tick_vals, ticktext, tick0, dtick)
         """
         base = datetime.datetime.combine(
             (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
@@ -1499,18 +1500,16 @@ def draw_intraday_charts(
                         in_session = True
                         break
             if in_session:
-                if cnt % tick_step == 0:
+                # 标签位置：每 label_interval * tick_step 分钟一个
+                if cnt % (tick_step * label_interval) == 0:
                     tick_vals.append(cnt)
-                    # 只在每 label_interval 个刻度显示标签
-                    if cnt % (tick_step * label_interval) == 0:
-                        ticktext.append(cur.strftime("%H:%M"))
-                    else:
-                        ticktext.append("")  # 空字符串，不显示标签
+                    ticktext.append(cur.strftime("%H:%M"))
                 cnt += 1
             cur += timedelta(minutes=1)
-        return tick_vals, ticktext
+        # tick0 = 0（第一个交易分钟索引），dtick = tick_step（5分钟）
+        return tick_vals, ticktext, 0, tick_step
 
-    tick_vals, ticktext = generate_tick_labels(current_date, tick_step=5, label_interval=3)
+    tick_vals, ticktext, tick0, dtick = generate_tick_labels(current_date, label_interval=3, tick_step=5)
 
     # ---- 图1: 产品 PnL（百分比，全局汇总） ----
     fig1 = go.Figure()
@@ -1541,11 +1540,19 @@ def draw_intraday_charts(
 
     xaxis_dict = dict(
         title="Time",
+        tickmode='array',
         tickvals=tick_vals,
         ticktext=ticktext,
         tickangle=-45,
-        type='linear',          # 强制线性轴，防止被当作日期
-        tickmode='array',       # 显式使用数组模式
+        showgrid=False,  # 隐藏主网格线，使用次要网格线
+        minor=dict(
+            dtick=dtick,
+            tick0=tick0,
+            showgrid=True,
+            gridcolor='lightgray',
+            gridwidth=0.5,
+            ticks='',  # 不显示次要刻度线，只保留网格
+        ),
     )
     fig1.update_layout(
         title="Product PnL (%) Over Time (Intraday)",
@@ -1590,11 +1597,19 @@ def draw_intraday_charts(
             ))
         xaxis_dict2 = dict(
             title="Time",
+            tickmode='array',
             tickvals=tick_vals,
             ticktext=ticktext,
             tickangle=-45,
-            type='linear',
-            tickmode='array',
+            showgrid=False,
+            minor=dict(
+                dtick=dtick,
+                tick0=tick0,
+                showgrid=True,
+                gridcolor='lightgray',
+                gridwidth=0.5,
+                ticks='',
+            ),
         )
         fig2.update_layout(
             title="Contract PnL / Market Value (All Products)",
@@ -1643,11 +1658,19 @@ def draw_intraday_charts(
             ))
         xaxis_dict3 = dict(
             title="Time",
+            tickmode='array',
             tickvals=tick_vals,
             ticktext=ticktext,
             tickangle=-45,
-            type='linear',
-            tickmode='array',
+            showgrid=False,
+            minor=dict(
+                dtick=dtick,
+                tick0=tick0,
+                showgrid=True,
+                gridcolor='lightgray',
+                gridwidth=0.5,
+                ticks='',
+            ),
         )
         fig3.update_layout(
             title="Position Ratio (Current/Open) - All Products",
@@ -1659,6 +1682,9 @@ def draw_intraday_charts(
         st.plotly_chart(fig3, width="stretch")
     else:
         st.info("无开盘持仓数据可显示")
+
+
+
 
 # ─────────────────────────────────────────────
 # DASHBOARD MAIN（修改：增加 init_capital_map）
