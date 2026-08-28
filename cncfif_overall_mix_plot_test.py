@@ -1309,6 +1309,16 @@ def build_intraday_series(
     if not timed_files:
         return None
 
+    # ---- 先读取所有快照，收集所有合约的并集 ----
+    all_instruments = set()
+    for _, fpath in timed_files:
+        df, _ = safe_read_csv(fpath)
+        if df is not None and not df.empty:
+            if "instrument_id" in df.columns:
+                all_instruments.update(df["instrument_id"].unique())
+    if not all_instruments:
+        return None
+
     # 合约乘数映射
     mult_map = {}
     if static_df is not None and not static_df.empty:
@@ -1318,8 +1328,9 @@ def build_intraday_series(
             if inst:
                 mult_map[inst] = float(mult)
 
-    # 数据字典
-    data_dict = {}
+    # 数据字典：为每个合约准备空列表
+    data_dict = {inst: [] for inst in all_instruments}
+    first_net = {}  # 记录每个合约在第一个快照的净持仓（用于开盘净持仓）
 
     # 定义交易时段（用于计算交易分钟索引）
     def get_trade_minute_index(dt: datetime.datetime, base_date: datetime.datetime) -> int:
@@ -1350,76 +1361,65 @@ def build_intraday_series(
             cur += timedelta(minutes=1)
         return minutes
 
+    base = datetime.datetime.combine(
+        (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
+        datetime.time(21, 0)
+    )
+
     # 遍历所有快照
-    for dt, fpath in timed_files:
-        df, err = safe_read_csv(fpath)
-        if err or df is None or df.empty:
-            continue
-
-        long_df = df[df["pos_type"] == "LONG"]
-        short_df = df[df["pos_type"] == "SHORT"]
-
-        inst_net = {}
-        inst_profit = {}
-        inst_price = {}
-        inst_mult = {}
-        for inst in set(long_df["instrument_id"]).union(set(short_df["instrument_id"])):
-            long_rows = long_df[long_df["instrument_id"] == inst]
-            short_rows = short_df[short_df["instrument_id"] == inst]
-            long_pos = long_rows["position"].sum() if not long_rows.empty else 0
-            short_pos = short_rows["position"].sum() if not short_rows.empty else 0
-            net = long_pos - short_pos
-            close_profit = long_rows["close_profit"].sum() + short_rows["close_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
-            position_profit = long_rows["position_profit"].sum() + short_rows["position_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
-            total_pnl = close_profit + position_profit
-            # 若净持仓和盈亏均为0，跳过该合约（避免大量零值点）
-            if net == 0 and total_pnl == 0:
-                continue
-            price = get_price(inst)
-            if price is None:
-                if not long_rows.empty:
-                    price = float(long_rows["pre_settlement_price"].iloc[0])
-                elif not short_rows.empty:
-                    price = float(short_rows["pre_settlement_price"].iloc[0])
-                else:
-                    price = 0.0
-            mult = mult_map.get(inst, 1.0)
-            inst_net[inst] = net
-            inst_profit[inst] = total_pnl
-            inst_price[inst] = price
-            inst_mult[inst] = mult
-
-        if not inst_net:
-            continue
-
-        # 计算时间索引
-        base = datetime.datetime.combine(
-            (datetime.datetime.strptime(str(current_date), "%Y%m%d") - timedelta(days=1)).date(),
-            datetime.time(21, 0)
-        )
+    for idx, (dt, fpath) in enumerate(timed_files):
+        df, _ = safe_read_csv(fpath)
         time_idx = get_trade_minute_index(dt, base)
         time_label = dt.strftime("%H:%M")
 
-        for inst, net in inst_net.items():
-            if inst not in data_dict:
-                data_dict[inst] = []
+        # 对每个合约，从df中提取数据，若df为空或合约不存在，则所有值为0
+        for inst in all_instruments:
+            if df is not None and not df.empty and "instrument_id" in df.columns:
+                long_rows = df[(df["instrument_id"] == inst) & (df["pos_type"] == "LONG")]
+                short_rows = df[(df["instrument_id"] == inst) & (df["pos_type"] == "SHORT")]
+                long_pos = long_rows["position"].sum() if not long_rows.empty else 0
+                short_pos = short_rows["position"].sum() if not short_rows.empty else 0
+                net = long_pos - short_pos
+                close_profit = long_rows["close_profit"].sum() + short_rows["close_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
+                position_profit = long_rows["position_profit"].sum() + short_rows["position_profit"].sum() if not (long_rows.empty and short_rows.empty) else 0
+                total_pnl = close_profit + position_profit
+                price = get_price(inst)
+                if price is None:
+                    if not long_rows.empty:
+                        price = float(long_rows["pre_settlement_price"].iloc[0])
+                    elif not short_rows.empty:
+                        price = float(short_rows["pre_settlement_price"].iloc[0])
+                    else:
+                        price = 0.0
+                mult = mult_map.get(inst, 1.0)
+                market_value = abs(net * price * mult)
+            else:
+                # 没有数据，全部为0
+                net = 0
+                total_pnl = 0
+                price = 0.0
+                mult = mult_map.get(inst, 1.0)
+                market_value = 0.0
+
+            # 记录第一个快照的净持仓（用于开盘净持仓）
+            if idx == 0:
+                first_net[inst] = net
+
             data_dict[inst].append({
                 "time_idx": time_idx,
                 "time_label": time_label,
                 "net_pos": net,
-                "market_value": abs(net * inst_price.get(inst, 0) * inst_mult.get(inst, 1.0)),
-                "cum_pnl": inst_profit.get(inst, 0),
-                "open_net": 0,
-                "price": inst_price.get(inst, 0),
+                "market_value": market_value,
+                "cum_pnl": total_pnl,
+                "open_net": 0,  # 稍后统一填充
+                "price": price,
             })
 
     # 填充 open_net（第一个快照的净持仓）
     for inst, records in data_dict.items():
-        if records:
-            first_record = records[0]
-            open_net = first_record["net_pos"]
-            for rec in records:
-                rec["open_net"] = open_net
+        open_net = first_net.get(inst, 0)
+        for rec in records:
+            rec["open_net"] = open_net
 
     # 转为 DataFrame
     result = {}
