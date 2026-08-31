@@ -1443,25 +1443,23 @@ def build_intraday_series(
         pattern = r'position_data_(\d{8})_(\d{8})_(\d{2}:\d{2}:\d{2})\.csv'
         match = re.match(pattern, fname)
         if match:
-            trade_date_str = match.group(1)   # 交易日（如 20260831）
-            time_str = match.group(3)         # 时间 09:53:11
-            # 注意：实际文件时间可能跨越自然日，但交易日是固定的
+            date_str = match.group(1)
+            time_str = match.group(3)
             try:
-                dt = datetime.datetime.strptime(f"{match.group(2)} {time_str}", "%Y%m%d %H:%M:%S")
-                trade_date = int(trade_date_str)
-                return trade_date, dt
+                return datetime.datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
             except ValueError:
                 return None
         return None
 
-    # 只读取交易日等于 current_date 的文件
+    base = _chart_session_base(current_date)
+    end = _chart_session_end(current_date)
+
     timed_files = []
     for f in files:
-        parsed = parse_time_from_filename(f)
-        if parsed is None:
+        dt = parse_time_from_filename(f)
+        if dt is None:
             continue
-        trade_date, dt = parsed
-        if trade_date != current_date:
+        if dt < base - timedelta(minutes=5) or dt > end + timedelta(minutes=5):
             continue
         timed_files.append((dt, os.path.join(path, f)))
     timed_files.sort(key=lambda x: x[0])
@@ -1475,7 +1473,6 @@ def build_intraday_series(
         tmp["multiplier"] = pd.to_numeric(tmp["multiplier"], errors="coerce").fillna(1.0)
         mult_map = dict(zip(tmp["instrument"].astype(str), tmp["multiplier"]))
 
-    base = _chart_session_base(current_date)
     frames = []
     for dt, fpath in timed_files:
         time_idx = get_trade_minute_index(dt, base, dt_to_idx)
@@ -1518,7 +1515,6 @@ def build_intraday_series(
 
     return result if result else None
 
-
 def draw_intraday_charts(
     product_configs: list,
     current_date: int,
@@ -1531,8 +1527,8 @@ def draw_intraday_charts(
     """
     绘制3个全局日内图表：
     - 图1：产品 PnL（百分比）
-    - 图2：所有产品的合约 Profit / Market Value（按产品区分曲线名称）
-    - 图3：所有产品的合约手数比例（按产品区分曲线名称）
+    - 图2：所有产品的合约 Profit / Init Capital
+    - 图3：所有产品的合约手数比例
     """
     dt_to_idx, idx_to_label, all_tick_vals, ticktext = build_chart_time_maps(current_date)
 
@@ -1595,6 +1591,7 @@ def draw_intraday_charts(
         grouped["pnl_pct"] = (grouped["cum_pnl"] / init_cap) * 100
         grouped = grouped.sort_values("time_idx")
         grouped = _break_gaps(grouped, "pnl_pct")
+        customdata = np.column_stack((grouped["cum_pnl"], [init_cap] * len(grouped)))
         fig1.add_trace(go.Scatter(
             x=grouped["time_idx"],
             y=grouped["pnl_pct"],
@@ -1603,7 +1600,13 @@ def draw_intraday_charts(
             line=dict(shape="hv", width=2),
             connectgaps=False,
             marker=dict(size=4),
-            hovertemplate="时间: %{text}<br>PnL: %{y:.2f}%<extra></extra>",
+            customdata=customdata,
+            hovertemplate=(
+                "时间: %{text}<br>"
+                "PnL: %{y:.2f}%<br>"
+                "盈亏: %{customdata[0]:.2f} / %{customdata[1]:.2f}<br>"
+                "产品: %{fullData.name}<extra></extra>"
+            ),
             text=grouped["time_label"],
         ))
 
@@ -1620,17 +1623,24 @@ def draw_intraday_charts(
     if not show_all and contract_filter.strip():
         contract_list = [c.strip() for c in contract_filter.split() if c.strip()]
 
-    # ---- 图2: 合约 PnL / Market Value（全局，所有产品） ----
+    # ---- 图2: 合约 Profit / Init Capital（全局，所有产品） ----
     fig2 = go.Figure()
     has_fig2 = False
     for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
         for inst, df in instrument_data.items():
             if contract_list and inst not in contract_list:
                 continue
-            group = df[["time_idx", "time_label", "cum_pnl", "market_value"]].copy()
-            group["pnl_ratio"] = np.where(group["market_value"] != 0, group["cum_pnl"] / group["market_value"], 0.0)
+            group = df[["time_idx", "time_label", "cum_pnl"]].copy()
+            # 使用 init_cap 计算比率
+            group["pnl_ratio"] = group["cum_pnl"] / init_cap if init_cap != 0 else 0.0
             group = group.sort_values("time_idx")
             group = _break_gaps(group, "pnl_ratio")
+            customdata = np.column_stack((
+                [product_key] * len(group),
+                [inst] * len(group),
+                group["cum_pnl"],
+                [init_cap] * len(group)
+            ))
             fig2.add_trace(go.Scatter(
                 x=group["time_idx"],
                 y=group["pnl_ratio"],
@@ -1638,15 +1648,22 @@ def draw_intraday_charts(
                 name=f"{product_key}_{inst}",
                 line=dict(shape="hv", width=1),
                 connectgaps=False,
-                hovertemplate="时间: %{text}<br>盈亏比例: %{y:.4f}<extra>%{fullData.name}</extra>",
+                customdata=customdata,
+                hovertemplate=(
+                    "时间: %{text}<br>"
+                    "盈亏/初始资金: %{y:.4f}<br>"
+                    "盈亏: %{customdata[2]:.2f} / %{customdata[3]:.2f}<br>"
+                    "产品: %{customdata[0]}<br>"
+                    "合约: %{customdata[1]}<extra></extra>"
+                ),
                 text=group["time_label"],
             ))
             has_fig2 = True
     if has_fig2:
         fig2.update_layout(
-            title="Contract profit / Market Value (All Products)",
+            title="Contract profit / Init Capital (All Products)",
             xaxis=xaxis_dict,
-            yaxis=dict(title="Profit", autorange=True),
+            yaxis=dict(title="Profit / Init Capital", autorange=True),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
         )
@@ -1667,6 +1684,10 @@ def draw_intraday_charts(
             group["pos_ratio"] = np.where(group["open_net"] != 0, group["net_pos"] / group["open_net"], 0.0)
             group = group.sort_values("time_idx")
             group = _break_gaps(group, "pos_ratio")
+            customdata = np.column_stack((
+                [product_key] * len(group),
+                [inst] * len(group)
+            ))
             fig3.add_trace(go.Scatter(
                 x=group["time_idx"],
                 y=group["pos_ratio"],
@@ -1674,7 +1695,13 @@ def draw_intraday_charts(
                 name=f"{product_key}_{inst}",
                 line=dict(shape="hv", width=1),
                 connectgaps=False,
-                hovertemplate="时间: %{text}<br>手数比例: %{y:.2f}<extra>%{fullData.name}</extra>",
+                customdata=customdata,
+                hovertemplate=(
+                    "时间: %{text}<br>"
+                    "手数比例: %{y:.2f}<br>"
+                    "产品: %{customdata[0]}<br>"
+                    "合约: %{customdata[1]}<extra></extra>"
+                ),
                 text=group["time_label"],
             ))
             has_fig3 = True
@@ -1689,8 +1716,6 @@ def draw_intraday_charts(
         st.plotly_chart(fig3, width="stretch")
     else:
         st.info("无开盘持仓数据可显示")
-
-
 
 
 # ─────────────────────────────────────────────
