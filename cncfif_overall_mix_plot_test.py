@@ -1640,9 +1640,9 @@ def draw_intraday_charts(
             has_fig2 = True
     if has_fig2:
         fig2.update_layout(
-            title="Contract PnL / Market Value (All Products)",
+            title="Contract profit / Market Value (All Products)",
             xaxis=xaxis_dict,
-            yaxis=dict(title="PnL Ratio", autorange=True),
+            yaxis=dict(title="Profit", autorange=True),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
         )
