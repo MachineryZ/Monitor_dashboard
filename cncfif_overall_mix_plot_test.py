@@ -1443,23 +1443,25 @@ def build_intraday_series(
         pattern = r'position_data_(\d{8})_(\d{8})_(\d{2}:\d{2}:\d{2})\.csv'
         match = re.match(pattern, fname)
         if match:
-            date_str = match.group(1)
-            time_str = match.group(3)
+            trade_date_str = match.group(1)   # 交易日（如 20260831）
+            time_str = match.group(3)         # 时间 09:53:11
+            # 注意：实际文件时间可能跨越自然日，但交易日是固定的
             try:
-                return datetime.datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
+                dt = datetime.datetime.strptime(f"{match.group(2)} {time_str}", "%Y%m%d %H:%M:%S")
+                trade_date = int(trade_date_str)
+                return trade_date, dt
             except ValueError:
                 return None
         return None
 
-    base = _chart_session_base(current_date)
-    end = _chart_session_end(current_date)
-
+    # 只读取交易日等于 current_date 的文件
     timed_files = []
     for f in files:
-        dt = parse_time_from_filename(f)
-        if dt is None:
+        parsed = parse_time_from_filename(f)
+        if parsed is None:
             continue
-        if dt < base - timedelta(minutes=5) or dt > end + timedelta(minutes=5):
+        trade_date, dt = parsed
+        if trade_date != current_date:
             continue
         timed_files.append((dt, os.path.join(path, f)))
     timed_files.sort(key=lambda x: x[0])
@@ -1473,6 +1475,7 @@ def build_intraday_series(
         tmp["multiplier"] = pd.to_numeric(tmp["multiplier"], errors="coerce").fillna(1.0)
         mult_map = dict(zip(tmp["instrument"].astype(str), tmp["multiplier"]))
 
+    base = _chart_session_base(current_date)
     frames = []
     for dt, fpath in timed_files:
         time_idx = get_trade_minute_index(dt, base, dt_to_idx)
@@ -1514,6 +1517,7 @@ def build_intraday_series(
         result[inst] = g[["time_idx", "time_label", "net_pos", "market_value", "cum_pnl", "open_net", "price"]].reset_index(drop=True)
 
     return result if result else None
+
 
 def draw_intraday_charts(
     product_configs: list,
