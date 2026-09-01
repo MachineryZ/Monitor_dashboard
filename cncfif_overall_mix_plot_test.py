@@ -1717,6 +1717,90 @@ def draw_intraday_charts(
     else:
         st.info("无开盘持仓数据可显示")
 
+    # ---- 新增 图4: 总持仓 vs 总盈亏（双纵轴） ----
+    fig4 = go.Figure()
+    # 收集所有合约的逐分钟数据
+    all_minute_dfs = []
+    for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
+        for inst, df in instrument_data.items():
+            if contract_list and inst not in contract_list:
+                continue
+            # 仅取必要列
+            sub = df[["time_idx", "time_label", "net_pos", "cum_pnl"]].copy()
+            all_minute_dfs.append(sub)
+    if all_minute_dfs:
+        combined = pd.concat(all_minute_dfs, ignore_index=True)
+        # 按 time_idx 汇总总持仓和总盈亏
+        grouped = combined.groupby("time_idx", as_index=False).agg(
+            total_pos=("net_pos", "sum"),
+            total_pnl=("cum_pnl", "sum"),
+            time_label=("time_label", "first")  # 取第一个标签即可（同时间标签相同）
+        )
+        grouped = grouped.sort_values("time_idx")
+        # 断线处理（分别处理持仓和盈亏）
+        grouped_pos = _break_gaps(grouped, "total_pos")
+        grouped_pnl = _break_gaps(grouped, "total_pnl")
+        # 为保证x轴一致，需要将两个数据框按time_idx合并（因为插入空点可能不一致）
+        # 更稳健：先合并，再处理断线
+        # 但更好的方式是分别添加两条线，各自允许断线，但x轴相同即可。
+        # 我们使用两个独立trace，但x轴共用。
+        # 直接使用 grouped 并设置 connectgaps=False 也可达到类似效果，但 _break_gaps 插入None更干净。
+        # 为简单，我们使用 _break_gaps 分别处理，然后各自添加trace
+        # 注意：分别处理后，x轴可能不完全一致，但Plotly会对齐。
+
+        # 添加总持仓 trace（左轴）
+        fig4.add_trace(go.Scatter(
+            x=grouped_pos["time_idx"],
+            y=grouped_pos["total_pos"],
+            mode="lines+markers",
+            name="Total Position (Net)",
+            line=dict(shape="hv", width=2, color="blue"),
+            connectgaps=False,
+            marker=dict(size=4),
+            yaxis="y",
+            hovertemplate="时间: %{text}<br>总持仓: %{y:.0f} 手<extra></extra>",
+            text=grouped_pos["time_label"],
+        ))
+        # 添加总盈亏 trace（右轴）
+        fig4.add_trace(go.Scatter(
+            x=grouped_pnl["time_idx"],
+            y=grouped_pnl["total_pnl"],
+            mode="lines+markers",
+            name="Total PnL (RMB)",
+            line=dict(shape="hv", width=2, color="red", dash="dot"),
+            connectgaps=False,
+            marker=dict(size=4),
+            yaxis="y2",
+            hovertemplate="时间: %{text}<br>总盈亏: %{y:,.2f} 元<extra></extra>",
+            text=grouped_pnl["time_label"],
+        ))
+
+        fig4.update_layout(
+            title="Total Position (Net) & Total PnL (Absolute) Over Time",
+            xaxis=xaxis_dict,
+            yaxis=dict(
+                title="Total Position (hands)",
+                autorange=True,
+                side="left",
+                showgrid=True,
+                gridcolor='lightgray',
+                zeroline=True,
+            ),
+            yaxis2=dict(
+                title="Total PnL (RMB)",
+                autorange=True,
+                side="right",
+                overlaying="y",
+                showgrid=False,  # 避免网格重叠混乱
+                zeroline=True,
+            ),
+            legend=dict(x=0.02, y=0.98),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig4, width="stretch")
+    else:
+        st.info("无足够数据绘制总持仓/总盈亏图")
+
 
 # ─────────────────────────────────────────────
 # DASHBOARD MAIN（修改：增加 init_capital_map）
