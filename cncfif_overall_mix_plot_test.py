@@ -1419,101 +1419,288 @@ def load_trade_data(path: str, date: int) -> pd.DataFrame | None:
         return None
     return df
 
-def build_intraday_series(
-    cfg: dict,
+def draw_intraday_charts(
+    product_configs: list,
     current_date: int,
     static_df: pd.DataFrame | None,
-    init_capital: float,
-    dt_to_idx: dict | None = None,
-    idx_to_label: dict | None = None,
-) -> dict | None:
+    product_checks: dict,
+    show_all: bool,
+    contract_filter: str,
+    init_capital_map: dict,
+):
     """
-    扫描产品路径下的 position_data_YYYYMMDD_YYYYMMDD_HH:MM:SS.csv 文件，
-    构建每个合约的日内时序（时间→交易分钟索引，净持仓，市值，累计盈亏）。
+    绘制3个全局日内图表 + 1个可选择合约的双轴图（持仓/盈亏）
     """
-    path = cfg["path"]
-    try:
-        files = [f for f in os.listdir(path) if f.startswith("position_data_") and f.endswith(".csv")]
-    except Exception:
-        return None
-    if not files:
-        return None
+    dt_to_idx, idx_to_label, all_tick_vals, ticktext = build_chart_time_maps(current_date)
 
-    def parse_time_from_filename(fname: str):
-        pattern = r'position_data_(\d{8})_(\d{8})_(\d{2}:\d{2}:\d{2})\.csv'
-        match = re.match(pattern, fname)
-        if match:
-            date_str = match.group(1)
-            time_str = match.group(3)
-            try:
-                return datetime.datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
-            except ValueError:
-                return None
-        return None
-
-    base = _chart_session_base(current_date)
-    end = _chart_session_end(current_date)
-
-    timed_files = []
-    for f in files:
-        dt = parse_time_from_filename(f)
-        if dt is None:
+    all_product_data = {}
+    for cfg in product_configs:
+        key = f"{cfg['market']}_{cfg['product']}"
+        if not product_checks.get(key, True):
             continue
-        if dt < base - timedelta(minutes=5) or dt > end + timedelta(minutes=5):
-            continue
-        timed_files.append((dt, os.path.join(path, f)))
-    timed_files.sort(key=lambda x: x[0])
+        init_cap = init_capital_map.get(key, 1.0)
+        try:
+            init_cap = float(init_cap)
+        except (TypeError, ValueError):
+            init_cap = 0.0
+        if init_cap <= 0:
+            init_cap = 1.0
+        data = build_intraday_series(
+            cfg, current_date, static_df, init_cap,
+            dt_to_idx=dt_to_idx, idx_to_label=idx_to_label,
+        )
+        if data:
+            all_product_data[key] = (data, init_cap, cfg["broker"], cfg["product"])
 
-    if not timed_files:
-        return None
+    if not all_product_data:
+        st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
+        return
 
-    mult_map = {}
-    if static_df is not None and not static_df.empty and "instrument" in static_df.columns:
-        tmp = static_df[["instrument", "multiplier"]].dropna(subset=["instrument"]).copy()
-        tmp["multiplier"] = pd.to_numeric(tmp["multiplier"], errors="coerce").fillna(1.0)
-        mult_map = dict(zip(tmp["instrument"].astype(str), tmp["multiplier"]))
+    if not all_tick_vals:
+        st.error("⚠️ 无法生成交易时段刻度，请检查系统日期。")
+        return
 
-    frames = []
-    for dt, fpath in timed_files:
-        time_idx = get_trade_minute_index(dt, base, dt_to_idx)
-        if idx_to_label is not None and time_idx in idx_to_label:
-            time_label = idx_to_label[time_idx]
-        else:
-            time_label = dt.strftime("%H:%M")
-        snap = _agg_snapshot(_read_position_snapshot(fpath))
-        if snap.empty:
-            continue
-        snap = snap.copy()
-        snap["time_idx"] = time_idx
-        snap["time_label"] = time_label
-        frames.append(snap)
-
-    if not frames:
-        return None
-
-    all_df = pd.concat(frames, ignore_index=True)
-    # 同一分钟多份快照：保留最后一份
-    all_df = all_df.sort_values(["instrument", "time_idx"]).drop_duplicates(
-        subset=["instrument", "time_idx"], keep="last"
+    xaxis_range = [min(all_tick_vals), max(all_tick_vals)]
+    xaxis_dict = dict(
+        title="Time",
+        tickmode='array',
+        tickvals=all_tick_vals,
+        ticktext=ticktext,
+        tickangle=-45,
+        range=xaxis_range,
+        showgrid=True,
+        gridcolor='lightgray',
+        gridwidth=0.5,
+        zeroline=False,
     )
 
-    px = all_df["instrument"].map(lambda inst: get_price(inst) if get_price(inst) is not None else np.nan)
-    all_df["price"] = px.fillna(all_df["price"])
-    all_df["mult"] = all_df["instrument"].map(mult_map).fillna(1.0)
-    all_df["market_value"] = (all_df["net_pos"].abs() * all_df["price"] * all_df["mult"]).astype(float)
-
-    first_net = all_df.sort_values("time_idx").groupby("instrument", as_index=True)["net_pos"].first()
-    all_df["open_net"] = all_df["instrument"].map(first_net).fillna(0.0)
-
-    result = {}
-    for inst, g in all_df.groupby("instrument", sort=False):
-        g = g.sort_values("time_idx")
-        # 全程都是 0 的合约不进图，少画很多空线
-        if (g["net_pos"].abs().sum() == 0) and (g["cum_pnl"].abs().sum() == 0) and (g["market_value"].sum() == 0):
+    # ---- 图1: 产品 PnL（百分比） ----
+    fig1 = go.Figure()
+    for product_key, (instrument_data, init_cap, _, _) in all_product_data.items():
+        all_dfs = []
+        for inst, df in instrument_data.items():
+            df_temp = df[["time_idx", "time_label", "cum_pnl"]].copy()
+            df_temp["time_idx"] = df_temp["time_idx"].astype(int)
+            all_dfs.append(df_temp)
+        if not all_dfs:
             continue
-        result[inst] = g[["time_idx", "time_label", "net_pos", "market_value", "cum_pnl", "open_net", "price"]].reset_index(drop=True)
+        combined = pd.concat(all_dfs, ignore_index=True)
+        grouped = combined.groupby("time_idx").agg(
+            cum_pnl=("cum_pnl", "sum"),
+            time_label=("time_label", "first")
+        ).reset_index()
+        grouped["pnl_pct"] = (grouped["cum_pnl"] / init_cap) * 100
+        grouped = grouped.sort_values("time_idx")
+        grouped = _break_gaps(grouped, "pnl_pct")
+        customdata = np.column_stack((grouped["cum_pnl"], [init_cap] * len(grouped)))
+        fig1.add_trace(go.Scatter(
+            x=grouped["time_idx"],
+            y=grouped["pnl_pct"],
+            mode="lines+markers",
+            name=product_key,
+            line=dict(shape="hv", width=2),
+            connectgaps=False,
+            marker=dict(size=4),
+            customdata=customdata,
+            hovertemplate=(
+                "时间: %{text}<br>"
+                "PnL: %{y:.2f}%<br>"
+                "盈亏: %{customdata[0]:.2f} / %{customdata[1]:.2f}<br>"
+                "产品: %{fullData.name}<extra></extra>"
+            ),
+            text=grouped["time_label"],
+        ))
 
-    return result if result else None
+    fig1.update_layout(
+        title="Product PnL (%) Over Time (Intraday)",
+        xaxis=xaxis_dict,
+        yaxis=dict(title="PnL (%)", autorange=True, rangemode="tozero"),
+        legend_title="Products",
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig1, width="stretch")
+
+    # 解析合约过滤列表
+    contract_list = []
+    if not show_all and contract_filter.strip():
+        contract_list = [c.strip() for c in contract_filter.split() if c.strip()]
+
+    # ---- 图2: 合约 Profit / Init Capital（全局） ----
+    fig2 = go.Figure()
+    has_fig2 = False
+    for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
+        for inst, df in instrument_data.items():
+            if contract_list and inst not in contract_list:
+                continue
+            group = df[["time_idx", "time_label", "cum_pnl"]].copy()
+            group["pnl_ratio"] = group["cum_pnl"] / init_cap if init_cap != 0 else 0.0
+            group = group.sort_values("time_idx")
+            group = _break_gaps(group, "pnl_ratio")
+            customdata = np.column_stack((
+                [product_key] * len(group),
+                [inst] * len(group),
+                group["cum_pnl"],
+                [init_cap] * len(group)
+            ))
+            fig2.add_trace(go.Scatter(
+                x=group["time_idx"],
+                y=group["pnl_ratio"],
+                mode="lines",
+                name=f"{product_key}_{inst}",
+                line=dict(shape="hv", width=1),
+                connectgaps=False,
+                customdata=customdata,
+                hovertemplate=(
+                    "时间: %{text}<br>"
+                    "盈亏/初始资金: %{y:.4f}<br>"
+                    "盈亏: %{customdata[2]:.2f} / %{customdata[3]:.2f}<br>"
+                    "产品: %{customdata[0]}<br>"
+                    "合约: %{customdata[1]}<extra></extra>"
+                ),
+                text=group["time_label"],
+            ))
+            has_fig2 = True
+    if has_fig2:
+        fig2.update_layout(
+            title="Contract profit / Init Capital (All Products)",
+            xaxis=xaxis_dict,
+            yaxis=dict(title="Profit / Init Capital", autorange=True),
+            legend_title="Contracts (Product_Instrument)",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig2, width="stretch")
+    else:
+        st.info("无合约数据可显示")
+
+    # ---- 图3: 手数比例（全局） ----
+    fig3 = go.Figure()
+    has_fig3 = False
+    for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
+        for inst, df in instrument_data.items():
+            if "open_net" not in df.columns:
+                continue
+            if contract_list and inst not in contract_list:
+                continue
+            group = df[["time_idx", "time_label", "net_pos", "open_net"]].copy()
+            group["pos_ratio"] = np.where(group["open_net"] != 0, group["net_pos"] / group["open_net"], 0.0)
+            group = group.sort_values("time_idx")
+            group = _break_gaps(group, "pos_ratio")
+            customdata = np.column_stack((
+                [product_key] * len(group),
+                [inst] * len(group)
+            ))
+            fig3.add_trace(go.Scatter(
+                x=group["time_idx"],
+                y=group["pos_ratio"],
+                mode="lines",
+                name=f"{product_key}_{inst}",
+                line=dict(shape="hv", width=1),
+                connectgaps=False,
+                customdata=customdata,
+                hovertemplate=(
+                    "时间: %{text}<br>"
+                    "手数比例: %{y:.2f}<br>"
+                    "产品: %{customdata[0]}<br>"
+                    "合约: %{customdata[1]}<extra></extra>"
+                ),
+                text=group["time_label"],
+            ))
+            has_fig3 = True
+    if has_fig3:
+        fig3.update_layout(
+            title="Position Ratio (Current/Open) - All Products",
+            xaxis=xaxis_dict,
+            yaxis=dict(title="Position Ratio", autorange=True),
+            legend_title="Contracts (Product_Instrument)",
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig3, width="stretch")
+    else:
+        st.info("无开盘持仓数据可显示")
+
+    # ---- 新增 图4: 单合约双轴图（持仓左轴，盈亏右轴） ----
+    st.markdown("---")
+    st.subheader("Single Contract: Absolute Position & PnL")
+
+    # 构建可选择的合约列表（受过滤条件影响）
+    contract_map = {}
+    for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
+        for inst, df in instrument_data.items():
+            if contract_list and inst not in contract_list:
+                continue
+            display_name = f"{product_key} | {inst}"
+            contract_map[display_name] = (product_key, inst, df)
+
+    if not contract_map:
+        st.info("没有符合条件的合约数据，请检查过滤条件或快照文件。")
+    else:
+        selected_display = st.selectbox(
+            "选择要查看的合约 (含产品与合约名称)",
+            options=list(contract_map.keys()),
+            index=0
+        )
+        product_key, inst, df = contract_map[selected_display]
+
+        # 准备数据，排序，处理断线
+        df_sorted = df.sort_values("time_idx").copy()
+        # 分别处理持仓和盈亏的断线
+        df_pos = _break_gaps(df_sorted, "net_pos")
+        df_pnl = _break_gaps(df_sorted, "cum_pnl")
+
+        fig4 = go.Figure()
+
+        # 持仓（左轴）
+        fig4.add_trace(go.Scatter(
+            x=df_pos["time_idx"],
+            y=df_pos["net_pos"],
+            mode="lines+markers",
+            name=f"{inst} 持仓 (手)",
+            line=dict(shape="hv", width=2, color="blue"),
+            connectgaps=False,
+            marker=dict(size=4),
+            yaxis="y",
+            hovertemplate="时间: %{text}<br>持仓: %{y:.0f} 手<extra></extra>",
+            text=df_pos["time_label"],
+        ))
+
+        # 盈亏（右轴）
+        fig4.add_trace(go.Scatter(
+            x=df_pnl["time_idx"],
+            y=df_pnl["cum_pnl"],
+            mode="lines+markers",
+            name=f"{inst} 盈亏 (元)",
+            line=dict(shape="hv", width=2, color="red", dash="dot"),
+            connectgaps=False,
+            marker=dict(size=4),
+            yaxis="y2",
+            hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
+            text=df_pnl["time_label"],
+        ))
+
+        fig4.update_layout(
+            title=f"合约 {inst} (产品 {product_key}) 持仓与盈亏",
+            xaxis=xaxis_dict,
+            yaxis=dict(
+                title="持仓 (手)",
+                autorange=True,
+                side="left",
+                showgrid=True,
+                gridcolor='lightgray',
+                zeroline=True,
+            ),
+            yaxis2=dict(
+                title="盈亏 (元)",
+                autorange=True,
+                side="right",
+                overlaying="y",
+                showgrid=False,
+                zeroline=True,
+            ),
+            legend=dict(x=0.02, y=0.98),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig4, width="stretch")
+
 
 def draw_intraday_charts(
     product_configs: list,
