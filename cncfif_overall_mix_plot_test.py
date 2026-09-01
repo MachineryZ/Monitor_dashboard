@@ -1530,24 +1530,29 @@ def draw_intraday_charts(
     """
     dt_to_idx, idx_to_label, all_tick_vals, ticktext = build_chart_time_maps(current_date)
 
-    all_product_data = {}
-    for cfg in product_configs:
-        key = f"{cfg['market']}_{cfg['product']}"
-        if not product_checks.get(key, True):
-            continue
-        init_cap = init_capital_map.get(key, 1.0)
-        try:
-            init_cap = float(init_cap)
-        except (TypeError, ValueError):
-            init_cap = 0.0
-        if init_cap <= 0:
-            init_cap = 1.0
-        data = build_intraday_series(
-            cfg, current_date, static_df, init_cap,
-            dt_to_idx=dt_to_idx, idx_to_label=idx_to_label,
-        )
-        if data:
-            all_product_data[key] = (data, init_cap, cfg["broker"], cfg["product"])
+    # ── 缓存 all_product_data ──
+    cache_key = f"all_product_data_{current_date}"
+    if cache_key not in st.session_state:
+        all_product_data = {}
+        for cfg in product_configs:
+            key = f"{cfg['market']}_{cfg['product']}"
+            # 缓存全量数据，绘图时再过滤
+            init_cap = init_capital_map.get(key, 1.0)
+            try:
+                init_cap = float(init_cap)
+            except (TypeError, ValueError):
+                init_cap = 0.0
+            if init_cap <= 0:
+                init_cap = 1.0
+            data = build_intraday_series(
+                cfg, current_date, static_df, init_cap,
+                dt_to_idx=dt_to_idx, idx_to_label=idx_to_label,
+            )
+            if data:
+                all_product_data[key] = (data, init_cap, cfg["broker"], cfg["product"])
+        st.session_state[cache_key] = all_product_data
+    else:
+        all_product_data = st.session_state[cache_key]
 
     if not all_product_data:
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
@@ -1574,6 +1579,8 @@ def draw_intraday_charts(
     # ---- 图1: 产品 PnL（百分比） ----
     fig1 = go.Figure()
     for product_key, (instrument_data, init_cap, _, _) in all_product_data.items():
+        if not product_checks.get(product_key, True):
+            continue
         all_dfs = []
         for inst, df in instrument_data.items():
             df_temp = df[["time_idx", "time_label", "cum_pnl"]].copy()
@@ -1626,11 +1633,12 @@ def draw_intraday_charts(
     fig2 = go.Figure()
     has_fig2 = False
     for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
+        if not product_checks.get(product_key, True):
+            continue
         for inst, df in instrument_data.items():
             if contract_list and inst not in contract_list:
                 continue
             group = df[["time_idx", "time_label", "cum_pnl"]].copy()
-            # 修改：比率乘以 10000 转换为 bps
             group["pnl_ratio"] = (group["cum_pnl"] / init_cap * 10000) if init_cap != 0 else 0.0
             group = group.sort_values("time_idx")
             group = _break_gaps(group, "pnl_ratio")
@@ -1674,6 +1682,8 @@ def draw_intraday_charts(
     fig3 = go.Figure()
     has_fig3 = False
     for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
+        if not product_checks.get(product_key, True):
+            continue
         for inst, df in instrument_data.items():
             if "open_net" not in df.columns:
                 continue
@@ -1716,17 +1726,17 @@ def draw_intraday_charts(
     else:
         st.info("无开盘持仓数据可显示")
 
-    # ---- 新增 图4: 单合约双轴图（持仓左轴，盈亏右轴，双下拉框联动） ----
+    # ---- 图4: 单合约双轴图（持仓左轴，盈亏右轴，双下拉框联动） ----
     st.markdown("---")
     st.subheader("Single Contract: Absolute Position & PnL")
 
-    # 构建产品->合约列表 和 合约数据映射
-    product_contract_map = {}  # key: product_key, value: list of instrument names
-    contract_data_map = {}     # key: (product_key, inst), value: DataFrame
-
+    # 构建产品->合约列表 和 合约数据映射（仅考虑 product_checks 选中的产品）
+    product_contract_map = {}
+    contract_data_map = {}
     for product_key, (instrument_data, init_cap, broker, product_name) in all_product_data.items():
+        if not product_checks.get(product_key, True):
+            continue
         inst_list = list(instrument_data.keys())
-        # 若过滤条件不为空，过滤合约
         if contract_list:
             inst_list = [inst for inst in inst_list if inst in contract_list]
         if inst_list:
@@ -1738,37 +1748,30 @@ def draw_intraday_charts(
     if not product_contract_map:
         st.info("没有符合条件的合约数据，请检查过滤条件或快照文件。")
     else:
-        # 第一个下拉框：选择产品
         product_options = list(product_contract_map.keys())
         selected_product = st.selectbox(
             "选择产品",
             options=product_options,
             index=0
         )
-        # 根据选中的产品获取合约列表
         contract_options = product_contract_map.get(selected_product, [])
         if not contract_options:
             st.info("该产品下没有符合条件的合约。")
         else:
-            # 第二个下拉框：选择合约
             selected_contract = st.selectbox(
                 "选择合约",
                 options=contract_options,
                 index=0
             )
-            # 获取对应的 DataFrame
             df = contract_data_map.get((selected_product, selected_contract))
             if df is None:
                 st.warning("未找到该合约的数据，请重新选择。")
             else:
-                # 准备数据，排序，处理断线
                 df_sorted = df.sort_values("time_idx").copy()
                 df_pos = _break_gaps(df_sorted, "net_pos")
                 df_pnl = _break_gaps(df_sorted, "cum_pnl")
 
                 fig4 = go.Figure()
-
-                # 持仓（左轴）
                 fig4.add_trace(go.Scatter(
                     x=df_pos["time_idx"],
                     y=df_pos["net_pos"],
@@ -1781,8 +1784,6 @@ def draw_intraday_charts(
                     hovertemplate="时间: %{text}<br>持仓: %{y:.0f} 手<extra></extra>",
                     text=df_pos["time_label"],
                 ))
-
-                # 盈亏（右轴）
                 fig4.add_trace(go.Scatter(
                     x=df_pnl["time_idx"],
                     y=df_pnl["cum_pnl"],
@@ -1795,7 +1796,6 @@ def draw_intraday_charts(
                     hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
                     text=df_pnl["time_label"],
                 ))
-
                 fig4.update_layout(
                     title=f"合约 {selected_contract} (产品 {selected_product}) 持仓与盈亏",
                     xaxis=xaxis_dict,
@@ -1819,8 +1819,6 @@ def draw_intraday_charts(
                     hovermode="x unified",
                 )
                 st.plotly_chart(fig4, width="stretch")
-
-
 
 # ─────────────────────────────────────────────
 # DASHBOARD MAIN（修改：增加 init_capital_map）
