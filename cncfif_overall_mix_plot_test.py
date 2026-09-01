@@ -1630,7 +1630,8 @@ def draw_intraday_charts(
             if contract_list and inst not in contract_list:
                 continue
             group = df[["time_idx", "time_label", "cum_pnl"]].copy()
-            group["pnl_ratio"] = group["cum_pnl"] / init_cap if init_cap != 0 else 0.0
+            # 修改：比率乘以 10000 转换为 bps
+            group["pnl_ratio"] = (group["cum_pnl"] / init_cap * 10000) if init_cap != 0 else 0.0
             group = group.sort_values("time_idx")
             group = _break_gaps(group, "pnl_ratio")
             customdata = np.column_stack((
@@ -1649,7 +1650,7 @@ def draw_intraday_charts(
                 customdata=customdata,
                 hovertemplate=(
                     "时间: %{text}<br>"
-                    "盈亏/初始资金: %{y:.4f}<br>"
+                    "盈亏/初始资金: %{y:.2f} bps<br>"                      # <-- 修改显示格式，加单位 bps
                     "盈亏: %{customdata[2]:.2f} / %{customdata[3]:.2f}<br>"
                     "产品: %{customdata[0]}<br>"
                     "合约: %{customdata[1]}<extra></extra>"
@@ -1661,7 +1662,7 @@ def draw_intraday_charts(
         fig2.update_layout(
             title="Contract profit / Init Capital (All Products)",
             xaxis=xaxis_dict,
-            yaxis=dict(title="Profit / Init Capital", autorange=True),
+            yaxis=dict(title="Profit / Init Capital (bps)", autorange=True),   # <-- y轴标题添加 (bps)
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
         )
