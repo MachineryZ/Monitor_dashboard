@@ -171,7 +171,6 @@ def get_data_date(market: str, path: str, current_date: int, market_open: bool) 
             next_td = get_next_trade_date(current_date)
             return next_td, f" (night→{next_td})"
         return current_date, ""
-    # 如果市场关闭，尝试使用当日数据，否则前一交易日（简化处理，原脚本中会用 file_exists_for_date，但我们不依赖账户文件，直接返回 current_date）
     return current_date, ""
 
 def is_market_open(market: str) -> bool:
@@ -464,34 +463,48 @@ def main():
     st.set_page_config(page_title="All Contracts Summary", layout="wide")
     st.title("📊 All Contracts: Position & PnL (Intraday)")
 
+    # ── 侧边栏产品选择 ──
+    with st.sidebar:
+        st.header("Product Filter")
+        product_checks = {}
+        for cfg in PRODUCT_CONFIGS:
+            label = f"{cfg['market']}_{cfg['product']}"
+            product_checks[label] = st.checkbox(label, value=True)
+
     current_date, _ = get_date_from_calendar()
 
-    # 加载静态信息
-    static_paths = []
-    for market in ["commodity", "futures"]:
-        paths = get_static_info_path(market)
-        if isinstance(paths, list):
-            static_paths.extend(paths)
-        else:
-            static_paths.append(paths)
-    static_df, _ = safe_read_csv(static_paths)
+    # ── 缓存数据 ──
+    cache_key = f"all_contract_data_{current_date}"
+    if cache_key not in st.session_state:
+        # 加载静态信息
+        static_paths = []
+        for market in ["commodity", "futures"]:
+            paths = get_static_info_path(market)
+            if isinstance(paths, list):
+                static_paths.extend(paths)
+            else:
+                static_paths.append(paths)
+        static_df, _ = safe_read_csv(static_paths)
 
-    # 初始化价格缓存
-    init_price_cache("commodity", current_date)
-    init_price_cache("futures",   current_date)
+        # 初始化价格缓存
+        init_price_cache("commodity", current_date)
+        init_price_cache("futures",   current_date)
 
-    # 构建所有产品的日内数据
-    all_product_data = {}
-    for cfg in PRODUCT_CONFIGS:
-        key = f"{cfg['market']}_{cfg['product']}"
-        # 由于不涉及资金，init_capital 仅用于图2（本页面不用），此处可随意
-        init_cap = 1.0
-        data = build_intraday_series(
-            cfg, current_date, static_df, init_cap,
-            dt_to_idx=None, idx_to_label=None,
-        )
-        if data:
-            all_product_data[key] = (data, cfg["broker"], cfg["product"])
+        # 构建所有产品的日内数据
+        all_product_data = {}
+        for cfg in PRODUCT_CONFIGS:
+            key = f"{cfg['market']}_{cfg['product']}"
+            # 由于不涉及资金，init_capital 仅用于图2（本页面不用），此处可随意
+            init_cap = 1.0
+            data = build_intraday_series(
+                cfg, current_date, static_df, init_cap,
+                dt_to_idx=None, idx_to_label=None,
+            )
+            if data:
+                all_product_data[key] = (data, cfg["broker"], cfg["product"])
+        st.session_state[cache_key] = all_product_data
+    else:
+        all_product_data = st.session_state[cache_key]
 
     if not all_product_data:
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
@@ -517,17 +530,25 @@ def main():
         zeroline=False,
     )
 
-    # 遍历所有产品，再遍历每个合约
-    chart_count = 0
+    # ── 筛选需要显示的产品 ──
+    filtered_product_data = {}
     for product_key, (instrument_data, broker, product_name) in all_product_data.items():
+        if product_checks.get(product_key, True):
+            filtered_product_data[product_key] = (instrument_data, broker, product_name)
+
+    if not filtered_product_data:
+        st.info("请至少选择一个产品。")
+        return
+
+    # ── 收集所有合约图表 ──
+    chart_list = []  # 每个元素为 (fig, title)
+    for product_key, (instrument_data, broker, product_name) in filtered_product_data.items():
         for inst, df in instrument_data.items():
-            # 准备数据，排序，处理断线
             df_sorted = df.sort_values("time_idx").copy()
             df_pos = _break_gaps(df_sorted, "net_pos")
             df_pnl = _break_gaps(df_sorted, "cum_pnl")
 
             fig = go.Figure()
-            # 持仓（左轴）
             fig.add_trace(go.Scatter(
                 x=df_pos["time_idx"],
                 y=df_pos["net_pos"],
@@ -540,7 +561,6 @@ def main():
                 hovertemplate="时间: %{text}<br>持仓: %{y:.0f} 手<extra></extra>",
                 text=df_pos["time_label"],
             ))
-            # 盈亏（右轴）
             fig.add_trace(go.Scatter(
                 x=df_pnl["time_idx"],
                 y=df_pnl["cum_pnl"],
@@ -575,13 +595,23 @@ def main():
                 ),
                 legend=dict(x=0.02, y=0.98),
                 hovermode="x unified",
-                height=350,  # 适当缩小高度以便一次显示多个
-                margin=dict(l=40, r=40, t=60, b=40),
+                height=300,
+                margin=dict(l=40, r=40, t=50, b=40),
             )
-            st.plotly_chart(fig, width="stretch")
-            chart_count += 1
+            chart_list.append((fig, f"{product_key} | {inst}"))
 
-    st.caption(f"共展示 {chart_count} 个合约图表")
+    # ── 每行3个图布局 ──
+    cols_per_row = 3
+    for i in range(0, len(chart_list), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j in range(cols_per_row):
+            idx = i + j
+            if idx < len(chart_list):
+                fig, title = chart_list[idx]
+                with cols[j]:
+                    st.plotly_chart(fig, width="stretch", key=f"fig_{idx}")
+
+    st.caption(f"共展示 {len(chart_list)} 个合约图表")
 
 if __name__ == "__main__":
     main()
