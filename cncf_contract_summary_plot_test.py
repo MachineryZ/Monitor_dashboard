@@ -494,7 +494,6 @@ def main():
         all_product_data = {}
         for cfg in PRODUCT_CONFIGS:
             key = f"{cfg['market']}_{cfg['product']}"
-            # 由于不涉及资金，init_capital 仅用于图2（本页面不用），此处可随意
             init_cap = 1.0
             data = build_intraday_series(
                 cfg, current_date, static_df, init_cap,
@@ -540,10 +539,39 @@ def main():
         st.info("请至少选择一个产品。")
         return
 
-    # ── 收集所有合约图表 ──
-    chart_list = []  # 每个元素为 (fig, title)
+    # ── 按品种合并（同一品种不同月份合约合并为一条曲线） ──
+    def extract_variety(inst: str) -> str:
+        match = re.match(r'^([A-Za-z]+)', inst)
+        if match:
+            return match.group(1)
+        return inst
+
+    merged_product_data = {}
     for product_key, (instrument_data, broker, product_name) in filtered_product_data.items():
+        variety_dict = {}
         for inst, df in instrument_data.items():
+            variety = extract_variety(inst)
+            if variety not in variety_dict:
+                variety_dict[variety] = []
+            variety_dict[variety].append(df)
+        # 合并每个品种
+        merged_instrument_data = {}
+        for variety, dfs in variety_dict.items():
+            # 合并所有合约数据，按time_idx聚合求和
+            combined = pd.concat(dfs, ignore_index=True)
+            grouped = combined.groupby('time_idx', as_index=False).agg({
+                'net_pos': 'sum',
+                'cum_pnl': 'sum',
+                'time_label': 'first',  # 时间标签取第一个
+            })
+            merged_df = grouped[['time_idx', 'time_label', 'net_pos', 'cum_pnl']].sort_values('time_idx').reset_index(drop=True)
+            merged_instrument_data[variety] = merged_df
+        merged_product_data[product_key] = (merged_instrument_data, broker, product_name)
+
+    # ── 收集所有合并后的品种图表 ──
+    chart_list = []
+    for product_key, (instrument_data, broker, product_name) in merged_product_data.items():
+        for variety, df in instrument_data.items():
             df_sorted = df.sort_values("time_idx").copy()
             df_pos = _break_gaps(df_sorted, "net_pos")
             df_pnl = _break_gaps(df_sorted, "cum_pnl")
@@ -553,7 +581,7 @@ def main():
                 x=df_pos["time_idx"],
                 y=df_pos["net_pos"],
                 mode="lines+markers",
-                name=f"{inst} 持仓 (手)",
+                name=f"{variety} 持仓 (手)",
                 line=dict(shape="hv", width=2, color="blue"),
                 connectgaps=False,
                 marker=dict(size=3),
@@ -565,7 +593,7 @@ def main():
                 x=df_pnl["time_idx"],
                 y=df_pnl["cum_pnl"],
                 mode="lines+markers",
-                name=f"{inst} 盈亏 (元)",
+                name=f"{variety} 盈亏 (元)",
                 line=dict(shape="hv", width=2, color="red", dash="dot"),
                 connectgaps=False,
                 marker=dict(size=3),
@@ -575,7 +603,7 @@ def main():
             ))
 
             fig.update_layout(
-                title=f"【{product_key}】{inst}  (broker: {broker})",
+                title=f"【{product_key}】{variety}  (broker: {broker})",
                 xaxis=xaxis_dict,
                 yaxis=dict(
                     title="持仓 (手)",
@@ -593,12 +621,12 @@ def main():
                     showgrid=False,
                     zeroline=True,
                 ),
-                legend=dict(x=0.02, y=0.98, font=dict(size=9)),   # <--- 新增 font.size
+                legend=dict(x=0.02, y=0.98, font=dict(size=9)),
                 hovermode="x unified",
                 height=300,
                 margin=dict(l=40, r=40, t=50, b=40),
             )
-            chart_list.append((fig, f"{product_key} | {inst}"))
+            chart_list.append((fig, f"{product_key} | {variety}"))
 
     # ── 每行3个图布局 ──
     cols_per_row = 3
@@ -611,7 +639,8 @@ def main():
                 with cols[j]:
                     st.plotly_chart(fig, width="stretch", key=f"fig_{idx}")
 
-    st.caption(f"共展示 {len(chart_list)} 个合约图表")
+    st.caption(f"共展示 {len(chart_list)} 个品种图表（按品种合并）")
+
 
 if __name__ == "__main__":
     main()
