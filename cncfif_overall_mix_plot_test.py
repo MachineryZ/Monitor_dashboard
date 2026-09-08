@@ -1695,7 +1695,9 @@ def draw_intraday_charts(
             group = _break_gaps(group, "pos_ratio")
             customdata = np.column_stack((
                 [product_key] * len(group),
-                [inst] * len(group)
+                [inst] * len(group),
+                group["net_pos"],
+                group["open_net"],
             ))
             fig3.add_trace(go.Scatter(
                 x=group["time_idx"],
@@ -1708,6 +1710,7 @@ def draw_intraday_charts(
                 hovertemplate=(
                     "时间: %{text}<br>"
                     "手数比例: %{y:.2f}<br>"
+                    "curr/open: %{customdata[2]}/%{customdata[3]}<br>"
                     "产品: %{customdata[0]}<br>"
                     "合约: %{customdata[1]}<extra></extra>"
                 ),
