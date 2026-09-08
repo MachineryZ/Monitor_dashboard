@@ -10,3 +10,4 @@
 /opt/anaconda3/bin/streamlit run /home/victor/code/monitor_dashboard/cncfif_overall_test.py --server.headless true --browser.gatherUsageStats false --server.port 2224
 
 
+/opt/anaconda3/bin/streamlit run /home/victor/code/monitor_dashboard/cncf_contract_summary_plot_test.py --server.headless true --browser.gatherUsageStats false --server.port 2227
