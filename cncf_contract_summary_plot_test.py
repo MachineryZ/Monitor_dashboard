@@ -93,16 +93,63 @@ PRODUCT_CONFIGS = [
     },
 ]
 
-# ── 辅助函数（从原脚本复制，精简）────────────────────
+# ── 交易所映射 ──────────────────────────────────────
+EXCHANGE_CN = {
+    "SHFE":  "上期所",
+    "DCE":   "大商所",
+    "CZCE":  "郑商所",
+    "CFFEX": "中金所",
+    "INE":   "上期能源",
+    "GFEX":  "广期所",
+}
+
+VARIETY_EXCHANGE: dict[str, str] = {}
+for _v in ["cu", "al", "zn", "pb", "ni", "sn", "au", "ag", "rb", "hc",
+           "ss", "bu", "ru", "sp", "fu", "wr", "ao", "br"]:
+    VARIETY_EXCHANGE[_v] = "SHFE"
+for _v in ["a", "b", "c", "cs", "i", "j", "jd", "jm", "l", "m", "p",
+           "pp", "v", "y", "eg", "eb", "rr", "pg", "lh", "bb", "fb"]:
+    VARIETY_EXCHANGE[_v] = "DCE"
+for _v in ["SR", "CF", "TA", "MA", "FG", "RM", "OI", "ZC", "AP", "CJ",
+           "UR", "SA", "PF", "PK", "SF", "SM", "WH", "PM", "RI", "LR",
+           "JR", "CY", "RS", "SH", "PX"]:
+    VARIETY_EXCHANGE[_v] = "CZCE"
+for _v in ["IF", "IC", "IH", "IM", "T", "TF", "TS", "TL"]:
+    VARIETY_EXCHANGE[_v] = "CFFEX"
+for _v in ["sc", "lu", "nr", "bc", "ec"]:
+    VARIETY_EXCHANGE[_v] = "INE"
+for _v in ["si", "lc", "ps"]:
+    VARIETY_EXCHANGE[_v] = "GFEX"
+
+
+def lookup_exchange(variety: str) -> str:
+    code = VARIETY_EXCHANGE.get(variety)
+    if code is None:
+        for k, v in VARIETY_EXCHANGE.items():
+            if k.lower() == variety.lower():
+                code = v
+                break
+    if code is None:
+        return "其他"
+    return EXCHANGE_CN.get(code, code)
+
+
+def extract_variety(inst: str) -> str:
+    m = re.match(r"^([A-Za-z]+)", str(inst))
+    return m.group(1) if m else str(inst)
+
+
+# ── 辅助函数 ──────────────────────────────────────
 
 def get_date_from_calendar() -> tuple[int, int]:
     date = datetime.datetime.now().date()
     date_int = int(date.strftime("%Y%m%d"))
     date_list = np.loadtxt(CALENDAR_PATH, dtype=np.int64, ndmin=1)
     pos = np.searchsorted(date_list, date_int, side="right")
-    date_int = int(date_list[pos-1])
+    date_int = int(date_list[pos - 1])
     next_trade_day = int(date_list[pos])
     return date_int, next_trade_day
+
 
 def safe_read_csv(filepath: str | list[str]) -> tuple[pd.DataFrame | None, str | None]:
     if isinstance(filepath, str):
@@ -126,15 +173,20 @@ def safe_read_csv(filepath: str | list[str]) -> tuple[pd.DataFrame | None, str |
     except Exception as e:
         return None, f"CSV concat error: {e}"
 
+
 def get_static_info_path(market: str) -> list[str]:
     return ["/cpfs/rawdata/cncf_all_nedd_before_open/ins_static_info.csv",
             "/cpfs/rawdata/cnif_all_need_before_open/ins_static_info.csv"]
 
+
 def get_market_data_path(market: str, data_date: int) -> list[str]:
     kinds = ["commodity", "futures"]
-    if datetime.datetime.now().hour >= 20 or datetime.datetime.now().hour < 9 or (datetime.datetime.now().hour == 9 and datetime.datetime.now().minute < 30):
+    if datetime.datetime.now().hour >= 20 or datetime.datetime.now().hour < 9 or (
+            datetime.datetime.now().hour == 9 and datetime.datetime.now().minute < 30):
         kinds.remove("futures")
-    return [f"/mnt/nfs_bohr_data1/china/trading_realdata/partial_market_data_realtime/{kind}/{data_date}.csv" for kind in kinds]
+    return [f"/mnt/nfs_bohr_data1/china/trading_realdata/partial_market_data_realtime/{kind}/{data_date}.csv"
+            for kind in kinds]
+
 
 def get_previous_trade_date(current_date: int) -> int:
     try:
@@ -148,6 +200,7 @@ def get_previous_trade_date(current_date: int) -> int:
     d -= datetime.timedelta(days=1)
     return int(d.strftime("%Y%m%d"))
 
+
 def get_next_trade_date(current_date: int) -> int:
     try:
         date_list = np.loadtxt(CALENDAR_PATH, dtype=np.int64, ndmin=1)
@@ -160,12 +213,14 @@ def get_next_trade_date(current_date: int) -> int:
     d += datetime.timedelta(days=1)
     return int(d.strftime("%Y%m%d"))
 
+
 def is_commodity_night_session_pre_midnight(t: datetime.time) -> bool:
     return t >= datetime.time(21, 0)
 
+
 def get_data_date(market: str, path: str, current_date: int, market_open: bool) -> tuple[int, str]:
     now = datetime.datetime.now()
-    t   = now.time()
+    t = now.time()
     if market_open:
         if market == "commodity" and is_commodity_night_session_pre_midnight(t):
             next_td = get_next_trade_date(current_date)
@@ -173,16 +228,17 @@ def get_data_date(market: str, path: str, current_date: int, market_open: bool) 
         return current_date, ""
     return current_date, ""
 
+
 def is_market_open(market: str) -> bool:
     t = datetime.datetime.now().time()
     sessions = [
-        (datetime.time(9,  0),  datetime.time(10, 15), False),
+        (datetime.time(9, 0), datetime.time(10, 15), False),
         (datetime.time(10, 30), datetime.time(11, 30), False),
-        (datetime.time(13, 30), datetime.time(15,  0), False),
-        (datetime.time(21,  0), datetime.time(2,  30), True ),
+        (datetime.time(13, 30), datetime.time(15, 0), False),
+        (datetime.time(21, 0), datetime.time(2, 30), True),
     ] if market == "commodity" else [
-        (datetime.time(9,  30), datetime.time(11, 30), False),
-        (datetime.time(13,  0), datetime.time(15,  0), False),
+        (datetime.time(9, 30), datetime.time(11, 30), False),
+        (datetime.time(13, 0), datetime.time(15, 0), False),
     ]
     for s_start, s_end, cross in sessions:
         if cross:
@@ -191,6 +247,7 @@ def is_market_open(market: str) -> bool:
         elif s_start <= t <= s_end:
             return True
     return False
+
 
 # ── 价格缓存 ──
 def init_price_cache(market: str, current_date: int):
@@ -203,10 +260,11 @@ def init_price_cache(market: str, current_date: int):
             continue
         if "instrument_id" in df.columns and "pre_settlement_price" in df.columns:
             for _, row in df.iterrows():
-                inst  = row["instrument_id"]
+                inst = row["instrument_id"]
                 price = row.get("pre_settlement_price", 0)
                 if inst not in _price_cache and pd.notna(price) and price > 0:
                     _price_cache[inst] = float(price)
+
 
 def update_price_cache(future_df: pd.DataFrame):
     if future_df is None or future_df.empty:
@@ -216,19 +274,20 @@ def update_price_cache(future_df: pd.DataFrame):
         return
     for _, row in future_df.iterrows():
         inst = row["instrument"]
-        ask  = row.get("ask_price1", 0)
-        bid  = row.get("bid_price1", 0)
+        ask = row.get("ask_price1", 0)
+        bid = row.get("bid_price1", 0)
         if pd.notna(ask) and pd.notna(bid) and (ask + bid) > 0:
             _price_cache[inst] = float((ask + bid) / 2)
+
 
 def get_price(instrument: str) -> float | None:
     return _price_cache.get(instrument)
 
-# ── 图表构建函数（来自原脚本）────────────────────────
 
+# ── 图表构建函数 ─────────────────────────────────────
 CHART_SESSIONS = [
     (datetime.time(21, 0), datetime.time(2, 30), True),
-    (datetime.time(9, 0),  datetime.time(10, 15), False),
+    (datetime.time(9, 0), datetime.time(10, 15), False),
     (datetime.time(10, 30), datetime.time(11, 30), False),
     (datetime.time(13, 30), datetime.time(15, 0), False),
 ]
@@ -239,6 +298,7 @@ _POS_SNAP_COLS = [
     "close_profit", "position_profit", "pre_settlement_price",
 ]
 
+
 def _in_chart_session(t: datetime.time) -> bool:
     for s_start, s_end, cross in CHART_SESSIONS:
         if cross:
@@ -248,13 +308,16 @@ def _in_chart_session(t: datetime.time) -> bool:
             return True
     return False
 
+
 def _chart_session_base(current_date: int) -> datetime.datetime:
     d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
     return datetime.datetime.combine((d - timedelta(days=1)).date(), datetime.time(21, 0))
 
+
 def _chart_session_end(current_date: int) -> datetime.datetime:
     d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
     return datetime.datetime.combine(d.date(), datetime.time(15, 0))
+
 
 def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval: int = 6):
     base = _chart_session_base(current_date)
@@ -279,6 +342,7 @@ def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval:
         cur += timedelta(minutes=1)
     return dt_to_idx, idx_to_label, all_tick_vals, ticktext
 
+
 def get_trade_minute_index(dt: datetime.datetime, base: datetime.datetime,
                            dt_to_idx: dict | None = None) -> int:
     if dt_to_idx is not None:
@@ -299,6 +363,7 @@ def get_trade_minute_index(dt: datetime.datetime, base: datetime.datetime,
             minutes += 1
         cur += timedelta(minutes=1)
     return minutes
+
 
 def _break_gaps(df: pd.DataFrame, ycol: str, max_gap: int = _CHART_MAX_GAP) -> pd.DataFrame:
     if df is None or df.empty or ycol not in df.columns:
@@ -321,6 +386,7 @@ def _break_gaps(df: pd.DataFrame, ycol: str, max_gap: int = _CHART_MAX_GAP) -> p
         last_x = x
     return pd.DataFrame(rows)
 
+
 def _read_position_snapshot(fpath: str) -> pd.DataFrame | None:
     try:
         df = pd.read_csv(fpath, usecols=lambda c: c in _POS_SNAP_COLS)
@@ -331,6 +397,7 @@ def _read_position_snapshot(fpath: str) -> pd.DataFrame | None:
             return None
         cols = [c for c in _POS_SNAP_COLS if c in df.columns]
         return df[cols] if cols else df
+
 
 def _agg_snapshot(df: pd.DataFrame | None) -> pd.DataFrame:
     empty = pd.DataFrame(columns=["instrument", "net_pos", "cum_pnl", "price"])
@@ -366,6 +433,7 @@ def _agg_snapshot(df: pd.DataFrame | None) -> pd.DataFrame:
     out["price"] = np.where(out["px_l"] != 0, out["px_l"], out["px_s"])
     out = out.rename(columns={"instrument_id": "instrument"})
     return out[["instrument", "net_pos", "cum_pnl", "price"]]
+
 
 def build_intraday_series(
     cfg: dict,
@@ -457,26 +525,18 @@ def build_intraday_series(
 
     return result if result else None
 
+
 # ── 主页面 ─────────────────────────────────────────────
 
 def main():
     st.set_page_config(page_title="All Contracts Summary", layout="wide")
     st.title("📊 All Contracts: Position & PnL (Intraday)")
 
-    # ── 侧边栏产品选择 ──
-    with st.sidebar:
-        st.header("Product Filter")
-        product_checks = {}
-        for cfg in PRODUCT_CONFIGS:
-            label = f"{cfg['market']}_{cfg['product']}"
-            product_checks[label] = st.checkbox(label, value=True)
-
     current_date, _ = get_date_from_calendar()
 
     # ── 缓存数据 ──
     cache_key = f"all_contract_data_{current_date}"
     if cache_key not in st.session_state:
-        # 加载静态信息
         static_paths = []
         for market in ["commodity", "futures"]:
             paths = get_static_info_path(market)
@@ -486,17 +546,14 @@ def main():
                 static_paths.append(paths)
         static_df, _ = safe_read_csv(static_paths)
 
-        # 初始化价格缓存
         init_price_cache("commodity", current_date)
-        init_price_cache("futures",   current_date)
+        init_price_cache("futures", current_date)
 
-        # 构建所有产品的日内数据
         all_product_data = {}
         for cfg in PRODUCT_CONFIGS:
             key = f"{cfg['market']}_{cfg['product']}"
-            init_cap = 1.0
             data = build_intraday_series(
-                cfg, current_date, static_df, init_cap,
+                cfg, current_date, static_df, 1.0,
                 dt_to_idx=None, idx_to_label=None,
             )
             if data:
@@ -509,7 +566,7 @@ def main():
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
 
-    # 构建统一的时间刻度（所有图表共用）
+    # ── 统一时间刻度 ──
     dt_to_idx, idx_to_label, all_tick_vals, ticktext = build_chart_time_maps(current_date)
     if not all_tick_vals:
         st.error("⚠️ 无法生成交易时段刻度，请检查系统日期。")
@@ -529,104 +586,127 @@ def main():
         zeroline=False,
     )
 
-    # ── 筛选需要显示的产品 ──
-    filtered_product_data = {}
+    # ── 筛选控件 ──
+    st.markdown("### 🔍 筛选条件")
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    # 产品下拉框：默认 shjq
+    available_products = sorted({pname for _, (_, _, pname) in all_product_data.items()})
+    product_options = ["all"] + available_products
+    default_product_idx = product_options.index("shjq") if "shjq" in product_options else 0
+
+    with col1:
+        selected_product = st.selectbox("产品", product_options, index=default_product_idx)
+
+    # 先按产品筛选，再收集该产品下所有出现的交易所
+    filtered_by_product = []
     for product_key, (instrument_data, broker, product_name) in all_product_data.items():
-        if product_checks.get(product_key, True):
-            filtered_product_data[product_key] = (instrument_data, broker, product_name)
-
-    if not filtered_product_data:
-        st.info("请至少选择一个产品。")
-        return
-
-    # ── 按品种合并（同一品种不同月份合约合并为一条曲线） ──
-    def extract_variety(inst: str) -> str:
-        match = re.match(r'^([A-Za-z]+)', inst)
-        if match:
-            return match.group(1)
-        return inst
-
-    merged_product_data = {}
-    for product_key, (instrument_data, broker, product_name) in filtered_product_data.items():
-        variety_dict = {}
+        if selected_product != "all" and product_name != selected_product:
+            continue
         for inst, df in instrument_data.items():
             variety = extract_variety(inst)
-            if variety not in variety_dict:
-                variety_dict[variety] = []
-            variety_dict[variety].append(df)
-        # 合并每个品种
-        merged_instrument_data = {}
-        for variety, dfs in variety_dict.items():
-            # 合并所有合约数据，按time_idx聚合求和
-            combined = pd.concat(dfs, ignore_index=True)
-            grouped = combined.groupby('time_idx', as_index=False).agg({
-                'net_pos': 'sum',
-                'cum_pnl': 'sum',
-                'time_label': 'first',  # 时间标签取第一个
+            exch = lookup_exchange(variety)
+            filtered_by_product.append({
+                "product_key": product_key,
+                "product_name": product_name,
+                "broker": broker,
+                "instrument": inst,
+                "variety": variety,
+                "exchange": exch,
+                "df": df,
             })
-            merged_df = grouped[['time_idx', 'time_label', 'net_pos', 'cum_pnl']].sort_values('time_idx').reset_index(drop=True)
-            merged_instrument_data[variety] = merged_df
-        merged_product_data[product_key] = (merged_instrument_data, broker, product_name)
 
-    # ── 收集所有合并后的品种图表 ──
+    available_exchanges = sorted({d["exchange"] for d in filtered_by_product})
+    exchange_options = ["all"] + available_exchanges
+
+    with col2:
+        # 用依赖产品的 key，让产品切换时交易所恢复默认 "all"
+        selected_exchange = st.selectbox(
+            "交易所", exchange_options, index=0,
+            key=f"exchange_select_{selected_product}",
+        )
+
+    # 按交易所筛选
+    if selected_exchange != "all":
+        filtered_data = [d for d in filtered_by_product if d["exchange"] == selected_exchange]
+    else:
+        filtered_data = filtered_by_product
+
+    with col3:
+        st.markdown(
+            f"<div style='padding-top: 28px; color: #666;'>"
+            f"筛选到 <b>{len(filtered_data)}</b> 个合约"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    if not filtered_data:
+        st.info("没有符合筛选条件的合约数据。")
+        return
+
+    # 排序：产品 → 交易所 → 合约
+    filtered_data.sort(key=lambda d: (d["product_key"], d["exchange"], d["instrument"]))
+
+    # ── 构建每个合约的图表 ──
     chart_list = []
-    for product_key, (instrument_data, broker, product_name) in merged_product_data.items():
-        for variety, df in instrument_data.items():
-            df_sorted = df.sort_values("time_idx").copy()
-            df_pos = _break_gaps(df_sorted, "net_pos")
-            df_pnl = _break_gaps(df_sorted, "cum_pnl")
+    for d in filtered_data:
+        df_sorted = d["df"].sort_values("time_idx").copy()
+        df_pos = _break_gaps(df_sorted, "net_pos")
+        df_pnl = _break_gaps(df_sorted, "cum_pnl")
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df_pos["time_idx"],
-                y=df_pos["net_pos"],
-                mode="lines+markers",
-                name=f"{variety} 持仓 (手)",
-                line=dict(shape="hv", width=2, color="blue"),
-                connectgaps=False,
-                marker=dict(size=3),
-                yaxis="y",
-                hovertemplate="时间: %{text}<br>持仓: %{y:.0f} 手<extra></extra>",
-                text=df_pos["time_label"],
-            ))
-            fig.add_trace(go.Scatter(
-                x=df_pnl["time_idx"],
-                y=df_pnl["cum_pnl"],
-                mode="lines+markers",
-                name=f"{variety} 盈亏 (元)",
-                line=dict(shape="hv", width=2, color="red", dash="dot"),
-                connectgaps=False,
-                marker=dict(size=3),
-                yaxis="y2",
-                hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
-                text=df_pnl["time_label"],
-            ))
+        inst = d["instrument"]
 
-            fig.update_layout(
-                title=f"【{product_key}】{variety}  (broker: {broker})",
-                xaxis=xaxis_dict,
-                yaxis=dict(
-                    title="持仓 (手)",
-                    autorange=True,
-                    side="left",
-                    showgrid=True,
-                    gridcolor='lightgray',
-                    zeroline=True,
-                ),
-                yaxis2=dict(
-                    title="盈亏 (元)",
-                    autorange=True,
-                    side="right",
-                    overlaying="y",
-                    showgrid=False,
-                    zeroline=True,
-                ),
-                legend=dict(x=0.02, y=0.98, font=dict(size=9)),
-                hovermode="x unified",
-                height=300,
-                margin=dict(l=40, r=40, t=50, b=40),
-            )
-            chart_list.append((fig, f"{product_key} | {variety}"))
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df_pos["time_idx"],
+            y=df_pos["net_pos"],
+            mode="lines+markers",
+            name=f"{inst} 持仓 (手)",
+            line=dict(shape="hv", width=2, color="blue"),
+            connectgaps=False,
+            marker=dict(size=3),
+            yaxis="y",
+            hovertemplate="时间: %{text}<br>持仓: %{y:.0f} 手<extra></extra>",
+            text=df_pos["time_label"],
+        ))
+        fig.add_trace(go.Scatter(
+            x=df_pnl["time_idx"],
+            y=df_pnl["cum_pnl"],
+            mode="lines+markers",
+            name=f"{inst} 盈亏 (元)",
+            line=dict(shape="hv", width=2, color="red", dash="dot"),
+            connectgaps=False,
+            marker=dict(size=3),
+            yaxis="y2",
+            hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
+            text=df_pnl["time_label"],
+        ))
+
+        fig.update_layout(
+            title=f"【{d['product_key']}】{inst}  ({d['exchange']} · broker: {d['broker']})",
+            xaxis=xaxis_dict,
+            yaxis=dict(
+                title="持仓 (手)",
+                autorange=True,
+                side="left",
+                showgrid=True,
+                gridcolor='lightgray',
+                zeroline=True,
+            ),
+            yaxis2=dict(
+                title="盈亏 (元)",
+                autorange=True,
+                side="right",
+                overlaying="y",
+                showgrid=False,
+                zeroline=True,
+            ),
+            legend=dict(x=0.02, y=0.98, font=dict(size=9)),
+            hovermode="x unified",
+            height=300,
+            margin=dict(l=40, r=40, t=50, b=40),
+        )
+        chart_list.append(fig)
 
     # ── 每行3个图布局 ──
     cols_per_row = 3
@@ -635,11 +715,14 @@ def main():
         for j in range(cols_per_row):
             idx = i + j
             if idx < len(chart_list):
-                fig, title = chart_list[idx]
                 with cols[j]:
-                    st.plotly_chart(fig, width="stretch", key=f"fig_{idx}")
+                    st.plotly_chart(chart_list[idx], width="stretch",
+                                    key=f"chart_{selected_product}_{selected_exchange}_{idx}")
 
-    st.caption(f"共展示 {len(chart_list)} 个品种图表（按品种合并）")
+    st.caption(
+        f"产品：{selected_product} | 交易所：{selected_exchange} | "
+        f"共展示 {len(chart_list)} 个合约图表"
+    )
 
 
 if __name__ == "__main__":
