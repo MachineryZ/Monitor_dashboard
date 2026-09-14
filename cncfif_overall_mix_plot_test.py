@@ -818,6 +818,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
         bank_account = get_bank_account_balance(path)
         if bank_account is not None:
             data["bank"] = bank_account
+            init_capital += float(bank_account)
         else:
             data["bank"] = pre_balance
     except Exception as e:
