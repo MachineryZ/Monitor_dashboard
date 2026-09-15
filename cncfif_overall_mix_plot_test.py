@@ -34,6 +34,7 @@ PRODUCT_BANK_MAPPING = {
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (34, 216),
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (215, 1049),
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya":           (215, 1049),
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx":           (215, 1049),
 }
 
 _rwp_api_cache: dict[str, float] = {}
@@ -134,6 +135,15 @@ PRODUCT_CONFIGS = [
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya",
         "broker":       "ya",
         "product":      "zz1h_ya",
+        "market":       "futures",
+        "init_capital": 0,
+        "aum_mul":      4.7858,
+        "db_product":   None,
+    },
+    {
+        "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx",
+        "broker":       "zx",
+        "product":      "jx1h_zx",
         "market":       "futures",
         "init_capital": 0,
         "aum_mul":      4.7858,
@@ -428,6 +438,8 @@ def get_margin_file_path(path: str, market: str, data_date: int) -> list[str]:
             [f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv"],
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya":
             [f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv"],
+        "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx":
+            [f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jx1h_zx_{data_date}.csv"],
     }
     return mapping.get(path, [])
 
@@ -538,6 +550,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
             "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
             "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
             "zz1h": "cnif_short_zz1h_zx_dashboard_bohr",
+            "jx1h_zx": "cnif_melt_ls_jx1h_zx_dashboard_bohr",
         }
         if product not in strategy_mapping:
             return None

@@ -34,6 +34,7 @@ PRODUCT_BANK_MAPPING = {
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h":           (34, 216),
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h":           (215, 1049),
     "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya":           (215, 1049),
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx":           (215, 1049),
 }
 
 _rwp_api_cache: dict[str, float] = {}
@@ -134,6 +135,15 @@ PRODUCT_CONFIGS = [
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya",
         "broker":       "ya",
         "product":      "zz1h_ya",
+        "market":       "futures",
+        "init_capital": 0,
+        "aum_mul":      4.7858,
+        "db_product":   None,
+    },
+    {
+        "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx",
+        "broker":       "zx",
+        "product":      "jx1h_zx",
         "market":       "futures",
         "init_capital": 0,
         "aum_mul":      4.7858,
@@ -428,6 +438,8 @@ def get_margin_file_path(path: str, market: str, data_date: int) -> list[str]:
             [f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv"],
         "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya":
             [f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_zz1h_{data_date}.csv"],
+        "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx":
+            [f"/cpfs/rawdata/cnif_all_need_before_open/margin_uplimit_jx1h_zx_{data_date}.csv"],
     }
     return mapping.get(path, [])
 
@@ -538,6 +550,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
             "jz1h": "cnif_short_jz1h_dz_dashboard_bohr",
             "ly1h": "cnif_position_melt_ly1h_dz_dashboard_bohr",
             "zz1h": "cnif_short_zz1h_zx_dashboard_bohr",
+            "jx1h_zx": "cnif_melt_ls_jx1h_zx_dashboard_bohr",
         }
         if product not in strategy_mapping:
             return None
@@ -818,6 +831,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
         bank_account = get_bank_account_balance(path)
         if bank_account is not None:
             data["bank"] = bank_account
+            init_capital += float(bank_account)
         else:
             data["bank"] = pre_balance
     except Exception as e:
@@ -1272,29 +1286,57 @@ def _in_chart_session(t: datetime.time) -> bool:
     return False
 
 
-def _chart_session_base(current_date: int) -> datetime.datetime:
-    d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
-    return datetime.datetime.combine((d - timedelta(days=1)).date(), datetime.time(21, 0))
+def _get_sessions_for_trading_day(current_date: int) -> list[tuple[datetime.datetime, datetime.datetime]]:
+    """
+    返回交易日 current_date 的完整交易时段（夜盘 + 日盘），用绝对 datetime 表示：
+      - 夜盘前半段：前一个交易日 21:00 ~ 23:59:00
+      - 夜盘后半段：前一个交易日「次日」（自然日）00:00 ~ 02:30
+      - 日盘：current_date 当天 09:00-10:15 / 10:30-11:30 / 13:30-15:00
+    用 get_previous_trade_date() 处理周末 / 节假日跨天，避免周一或节后第一天漏读上周五/节前的夜盘数据。
+    """
+    prev_td  = get_previous_trade_date(current_date)
+    prev_day = datetime.datetime.strptime(str(prev_td), "%Y%m%d").date()
+    curr_day = datetime.datetime.strptime(str(current_date), "%Y%m%d").date()
+    next_day = prev_day + timedelta(days=1)
 
-
-def _chart_session_end(current_date: int) -> datetime.datetime:
-    d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
-    return datetime.datetime.combine(d.date(), datetime.time(15, 0))
-
+    sessions: list[tuple[datetime.datetime, datetime.datetime]] = []
+    # 夜盘前半段（前一个交易日 21:00 ~ 23:59:00）
+    sessions.append((
+        datetime.datetime.combine(prev_day, datetime.time(21, 0)),
+        datetime.datetime.combine(prev_day, datetime.time(23, 59, 0)),
+    ))
+    # 夜盘后半段（前一个交易日次日 00:00 ~ 02:30）
+    sessions.append((
+        datetime.datetime.combine(next_day, datetime.time(0, 0)),
+        datetime.datetime.combine(next_day, datetime.time(2, 30)),
+    ))
+    # 日盘（current_date 当天）
+    for s, e in [
+        (datetime.time(9,  0),  datetime.time(10, 15)),
+        (datetime.time(10, 30), datetime.time(11, 30)),
+        (datetime.time(13, 30), datetime.time(15,  0)),
+    ]:
+        sessions.append((
+            datetime.datetime.combine(curr_day, s),
+            datetime.datetime.combine(curr_day, e),
+        ))
+    return sessions
 
 def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval: int = 6):
-    """一次遍历交易时段，生成 time_idx 查找表和 x 轴刻度。"""
-    base = _chart_session_base(current_date)
-    end = _chart_session_end(current_date)
+    """
+    一次遍历该交易日的所有交易时段（含跨周末 / 节假日的夜盘），
+    生成 time_idx 查找表和 x 轴刻度。
+    """
+    sessions = _get_sessions_for_trading_day(current_date)
     dt_to_idx: dict[datetime.datetime, int] = {}
     idx_to_label: dict[int, str] = {}
     all_tick_vals: list[int] = []
     ticktext: list[str] = []
-    cur = base
     idx = 0
     label_every = tick_step * label_interval
-    while cur <= end:
-        if _in_chart_session(cur.time()):
+    for s_start, s_end in sessions:
+        cur = s_start
+        while cur <= s_end:
             key = cur.replace(second=0, microsecond=0)
             dt_to_idx[key] = idx
             label = cur.strftime("%H:%M")
@@ -1303,7 +1345,7 @@ def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval:
                 all_tick_vals.append(idx)
                 ticktext.append(label if idx % label_every == 0 else "")
             idx += 1
-        cur += timedelta(minutes=1)
+            cur += timedelta(minutes=1)
     return dt_to_idx, idx_to_label, all_tick_vals, ticktext
 
 
@@ -1452,16 +1494,24 @@ def build_intraday_series(
                 return None
         return None
 
-    base = _chart_session_base(current_date)
-    end = _chart_session_end(current_date)
+    # base 仅作为无 dt_to_idx 时的回退
+    sessions = _get_sessions_for_trading_day(current_date)
+    base = sessions[0][0] if sessions else None
 
+    # 有 dt_to_idx：精确到分钟判断快照是否落在这个交易日的交易时段内
+    # 无 dt_to_idx：退化为「时间点落在任一交易时段」的粗略过滤
     timed_files = []
     for f in files:
         dt = parse_time_from_filename(f)
         if dt is None:
             continue
-        if dt < base - timedelta(minutes=5) or dt > end + timedelta(minutes=5):
-            continue
+        key = dt.replace(second=0, microsecond=0)
+        if dt_to_idx is not None:
+            if key not in dt_to_idx:
+                continue
+        else:
+            if not _in_chart_session(dt.time()):
+                continue
         timed_files.append((dt, os.path.join(path, f)))
     timed_files.sort(key=lambda x: x[0])
 

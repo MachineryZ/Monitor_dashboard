@@ -20,6 +20,7 @@ RWP_CREDENTIALS = {
 # ── 产品与银行账户映射 ────────────────────────────────
 # 产品路径 → (fund_id, unit_id)
 PRODUCT_BANK_MAPPING = {
+    "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya/": (58, 230),  # 八卦田（安心1号），不正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian": (58, 230),  # 八卦田（安心1号），不正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx":   (569, 9118),  # 山海CTA平衡1号， 正常
     "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx": (568, 9122),  # 进取， 正常
@@ -57,6 +58,15 @@ FUTURES_SESSIONS = [
 
 # ── Product registry ──────────────────────────
 PRODUCT_CONFIGS = [
+    {
+        "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya",
+        "broker":       "ya",
+        "product":      "ax1h_ya",
+        "market":       "commodity",
+        "init_capital": 0,
+        "aum_mul":      4.0,
+        "db_product":   "commodity_melt_ax1h",
+    },
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
         "broker":       "dz",
@@ -498,11 +508,15 @@ def get_data_date(
 # ─────────────────────────────────────────────
 # PATH HELPERS
 # ─────────────────────────────────────────────
-
 def get_margin_file_path(path: str, market: str, data_date: int) -> list[str]:
     # if market == "commodity":
     #     return "/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_include_ine.csv"
     mapping = {
+        "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya":
+            [
+                f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_ax1h_ya_{data_date}.csv",
+                f"/cpfs/rawdata/cnif_all_need_before_open/ziyong_margin_uplimit.csv"
+            ],
         "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian":
             [
                 f"/cpfs/rawdata/cncf_all_nedd_before_open/margin_uplimit_baguatian_{data_date}.csv",
@@ -560,6 +574,7 @@ def get_market_data_path(market: str, data_date: int) -> list[str]:
         f"/partial_market_data_realtime/{kind}/{data_date}.csv"
         for kind in kinds
     ]
+
 
 
 def get_trade_file_path(path: str, data_date: int) -> str:
@@ -642,6 +657,7 @@ def load_risk_position(market: str, product: str, data_date: int) -> dict[str, f
     result = {}
     if market == "commodity":
         strategy_mapping = {
+            "ax1h_ya": "cncf_melt_ax1h_ya_bohr",
             "bgt_ax1h": "cncf_melt_bgt_dz_bohr",
             "shjq": "cncf_melt_shjq_zx_bohr",
             "shph1h": "cncf_melt_shph1h_zx_bohr",
@@ -1066,6 +1082,8 @@ def calculate_product(
     data["margin"]           = margin
     init_capital = resolve_init_capital(cfg, (pre_balance + deposit - withdraw), balance)
     data["init_capital"] = init_capital
+    if data["product"] == "ax1h_ya": 
+        print(f"ax1h_ya: {resolve_init_capital}")
     
     # ★ 新增：获取银行账户余额并计算 bank 列
     try:
