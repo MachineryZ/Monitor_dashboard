@@ -1,4 +1,3 @@
-
 import os
 import time
 import math
@@ -16,6 +15,9 @@ import re  # 新增
 # ── 新增：Plotly 用于图表 ──
 import plotly.graph_objects as go
 from datetime import timedelta
+
+# ── ★ 自动刷新间隔（秒），想改成别的数字直接改这里 ──
+REFRESH_INTERVAL_SECONDS = 300
 
 # ── RWP API 配置 ──────────────────────────────────────
 RWP_CREDENTIALS = {
@@ -2220,7 +2222,19 @@ def dashboard():
             import traceback
             st.error(traceback.format_exc())
 
-    time.sleep(300)
+    # ── ★ 自动刷新：睡固定间隔 → 清日内数据 / 价格 / 银行余额缓存 → rerun ──
+    # 1) 先 sleep，用户在这段时间看到的仍是旧图（不会闪白屏）
+    # 2) 然后清掉三类缓存，保证下一次 rerun 会重新读文件
+    #    - all_product_data_* : 日内 position_data 快照缓存
+    #    - _price_cache       : 全局价格缓存
+    #    - _rwp_api_cache     : RWP 银行余额缓存（否则账上钱不更新）
+    # 3) rerun 触发下一次完整渲染
+    time.sleep(REFRESH_INTERVAL_SECONDS)
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("all_product_data_"):
+            del st.session_state[_k]
+    _price_cache.clear()
+    _rwp_api_cache.clear()
     st.rerun()
 
 if __name__ == "__main__":
