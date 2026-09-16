@@ -1,4 +1,5 @@
 import os
+import time
 import datetime
 import pandas as pd
 import numpy as np
@@ -11,8 +12,6 @@ import re
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
 _price_cache: dict[str, float] = {}
 
-# 新增：Contract Profit / Init Capital (bps) 图使用的默认初始资金
-# 若你有真实的产品级 init_capital，可在此按 product 名称配置
 DEFAULT_INIT_CAP = 100_000_000.0
 
 PRODUCT_CONFIGS = [
@@ -622,9 +621,8 @@ def build_intraday_series(
     return result if result else None
 
 
-# ── 主页面 ─────────────────────────────────────────────
-def main():
-    st.set_page_config(page_title="All Contracts Summary", layout="wide")
+# ── 页面渲染 ─────────────────────────────────────────────
+def _render_page():
     st.title("📊 All Contracts: Position & PnL (Intraday)")
 
     current_date, _ = get_date_from_calendar()
@@ -744,8 +742,7 @@ def main():
     filtered_data.sort(key=lambda d: (d["product_key"], d["exchange"], d["sector"], d["instrument"]))
 
     # ─────────────────────────────────────────────────
-    # ★ 新增：Contract Profit / Init Capital (bps) 折线图
-    #   风格与 cncfif_overall 的图2一致，只展示当前筛选出来的合约
+    # Contract Profit / Init Capital (bps) 折线图
     # ─────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("📈 Contract Profit / Init Capital (bps)")
@@ -758,8 +755,6 @@ def main():
         if df is None or df.empty:
             continue
         init_cap = DEFAULT_INIT_CAP
-        # 如果该产品在 PRODUCT_CONFIGS 中显式配置了 init_capital>0，则优先使用
-        # （按 product_name 匹配）
         for _c in PRODUCT_CONFIGS:
             if _c.get("product") == d["product_name"] and _c.get("init_capital", 0) > 0:
                 init_cap = float(_c["init_capital"])
@@ -819,7 +814,7 @@ def main():
         st.info("没有可用于绘制 盈亏/初始资金 曲线的合约数据。")
 
     # ─────────────────────────────────────────────────
-    # 下面保持原有逻辑：每个合约的小图
+    # 每个合约的小图
     # ─────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("📊 Per-Contract Position & PnL")
@@ -906,6 +901,47 @@ def main():
         f"产品：{selected_product} | 交易所/板块：{selected_group} | "
         f"共展示 {len(chart_list)} 个合约图表"
     )
+
+
+# ── 自动刷新包装 ─────────────────────────────────────────
+def main():
+    st.set_page_config(page_title="All Contracts Summary", layout="wide")
+
+    # ── 自动刷新控件 ──
+    with st.container():
+        c1, c2, c3 = st.columns([1, 1, 3])
+        with c1:
+            enable_auto_refresh = st.checkbox(
+                "自动刷新", value=True, key="enable_auto_refresh"
+            )
+        with c2:
+            refresh_interval = st.number_input(
+                "刷新间隔 (秒)",
+                min_value=30, max_value=3600,
+                value=300, step=30,
+                key="refresh_interval",
+            )
+        with c3:
+            last_updated = st.session_state.get("last_refresh_time", "—")
+            st.caption(
+                f"自动刷新：{'开启' if enable_auto_refresh else '关闭'} | "
+                f"间隔：{refresh_interval} 秒 | "
+                f"上次刷新：{last_updated}"
+            )
+
+    # ── 页面渲染（内部出错也不影响自动刷新） ──
+    try:
+        _render_page()
+    except Exception as e:
+        import traceback
+        st.error(f"页面渲染出错：{e}")
+        st.code(traceback.format_exc())
+
+    st.session_state["last_refresh_time"] = datetime.datetime.now().strftime("%H:%M:%S")
+
+    if enable_auto_refresh:
+        time.sleep(int(refresh_interval))
+        st.rerun()
 
 
 if __name__ == "__main__":
