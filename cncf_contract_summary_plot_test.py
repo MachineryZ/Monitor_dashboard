@@ -14,6 +14,9 @@ _price_cache: dict[str, float] = {}
 
 DEFAULT_INIT_CAP = 100_000_000.0
 
+# ★ 自动刷新间隔（秒），想改成别的数字直接改这里
+REFRESH_INTERVAL_SECONDS = 300
+
 PRODUCT_CONFIGS = [
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya",
@@ -627,7 +630,7 @@ def _render_page():
 
     current_date, _ = get_date_from_calendar()
 
-    # ── 缓存数据 ──
+    # ── 缓存数据（每次 rerun 时如果 session_state 里没有，就重新构建） ──
     cache_key = f"all_contract_data_{current_date}"
     if cache_key not in st.session_state:
         static_paths = []
@@ -639,6 +642,8 @@ def _render_page():
                 static_paths.append(paths)
         static_df, _ = safe_read_csv(static_paths)
 
+        # 每次重建缓存时清一次价格缓存，让价格也刷新
+        _price_cache.clear()
         init_price_cache("commodity", current_date)
         init_price_cache("futures", current_date)
 
@@ -903,31 +908,9 @@ def _render_page():
     )
 
 
-# ── 自动刷新包装 ─────────────────────────────────────────
+# ── 自动刷新包装（固定间隔，无 UI） ────────────────────────
 def main():
     st.set_page_config(page_title="All Contracts Summary", layout="wide")
-
-    # ── 自动刷新控件 ──
-    with st.container():
-        c1, c2, c3 = st.columns([1, 1, 3])
-        with c1:
-            enable_auto_refresh = st.checkbox(
-                "自动刷新", value=True, key="enable_auto_refresh"
-            )
-        with c2:
-            refresh_interval = st.number_input(
-                "刷新间隔 (秒)",
-                min_value=30, max_value=3600,
-                value=300, step=30,
-                key="refresh_interval",
-            )
-        with c3:
-            last_updated = st.session_state.get("last_refresh_time", "—")
-            st.caption(
-                f"自动刷新：{'开启' if enable_auto_refresh else '关闭'} | "
-                f"间隔：{refresh_interval} 秒 | "
-                f"上次刷新：{last_updated}"
-            )
 
     # ── 页面渲染（内部出错也不影响自动刷新） ──
     try:
@@ -937,11 +920,12 @@ def main():
         st.error(f"页面渲染出错：{e}")
         st.code(traceback.format_exc())
 
-    st.session_state["last_refresh_time"] = datetime.datetime.now().strftime("%H:%M:%S")
-
-    if enable_auto_refresh:
-        time.sleep(int(refresh_interval))
-        st.rerun()
+    # ── 固定间隔自动刷新：sleep → 清数据缓存 → rerun ──
+    time.sleep(REFRESH_INTERVAL_SECONDS)
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("all_contract_data_"):
+            del st.session_state[_k]
+    st.rerun()
 
 
 if __name__ == "__main__":
