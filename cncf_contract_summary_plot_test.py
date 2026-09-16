@@ -11,6 +11,10 @@ import re
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
 _price_cache: dict[str, float] = {}
 
+# 新增：Contract Profit / Init Capital (bps) 图使用的默认初始资金
+# 若你有真实的产品级 init_capital，可在此按 product 名称配置
+DEFAULT_INIT_CAP = 100_000_000.0
+
 PRODUCT_CONFIGS = [
     {
         "path":         "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya",
@@ -739,7 +743,87 @@ def main():
 
     filtered_data.sort(key=lambda d: (d["product_key"], d["exchange"], d["sector"], d["instrument"]))
 
-    # ── 构建每个合约的图表 ──
+    # ─────────────────────────────────────────────────
+    # ★ 新增：Contract Profit / Init Capital (bps) 折线图
+    #   风格与 cncfif_overall 的图2一致，只展示当前筛选出来的合约
+    # ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("📈 Contract Profit / Init Capital (bps)")
+
+    fig_bps = go.Figure()
+    has_bps = False
+    for d in filtered_data:
+        inst = d["instrument"]
+        df = d["df"]
+        if df is None or df.empty:
+            continue
+        init_cap = DEFAULT_INIT_CAP
+        # 如果该产品在 PRODUCT_CONFIGS 中显式配置了 init_capital>0，则优先使用
+        # （按 product_name 匹配）
+        for _c in PRODUCT_CONFIGS:
+            if _c.get("product") == d["product_name"] and _c.get("init_capital", 0) > 0:
+                init_cap = float(_c["init_capital"])
+                break
+
+        group = df[["time_idx", "time_label", "cum_pnl"]].copy()
+        group["pnl_ratio"] = (group["cum_pnl"] / init_cap * 10000) if init_cap != 0 else 0.0
+        group = group.sort_values("time_idx")
+        group = _break_gaps(group, "pnl_ratio")
+        customdata = np.column_stack((
+            [d["product_key"]] * len(group),
+            [inst] * len(group),
+            group["cum_pnl"],
+            [init_cap] * len(group),
+        ))
+        fig_bps.add_trace(go.Scatter(
+            x=group["time_idx"],
+            y=group["pnl_ratio"],
+            mode="lines",
+            name=f"{d['product_key']}_{inst}",
+            line=dict(shape="hv", width=1),
+            connectgaps=False,
+            customdata=customdata,
+            hovertemplate=(
+                "时间: %{text}<br>"
+                "盈亏/初始资金: %{y:.2f} bps<br>"
+                "盈亏: %{customdata[2]:,.2f} / %{customdata[3]:,.2f}<br>"
+                "产品: %{customdata[0]}<br>"
+                "合约: %{customdata[1]}<extra></extra>"
+            ),
+            text=group["time_label"],
+        ))
+        has_bps = True
+
+    if has_bps:
+        fig_bps.update_layout(
+            title=(
+                f"Contract Profit / Init Capital (Selected Contracts, "
+                f"product={selected_product}, group={selected_group}, "
+                f"init_cap default={DEFAULT_INIT_CAP:,.0f})"
+            ),
+            xaxis=xaxis_dict,
+            yaxis=dict(
+                title="Profit / Init Capital (bps)",
+                autorange=True,
+                exponentformat="none",
+                showexponent="none",
+                tickformat=",.0f",
+            ),
+            legend_title="Contracts (Product_Instrument)",
+            hovermode="x unified",
+            height=450,
+            margin=dict(l=60, r=40, t=60, b=40),
+        )
+        st.plotly_chart(fig_bps, width="stretch", key="bps_chart")
+    else:
+        st.info("没有可用于绘制 盈亏/初始资金 曲线的合约数据。")
+
+    # ─────────────────────────────────────────────────
+    # 下面保持原有逻辑：每个合约的小图
+    # ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("📊 Per-Contract Position & PnL")
+
     chart_list = []
     for d in filtered_data:
         df_sorted = d["df"].sort_values("time_idx").copy()
@@ -775,8 +859,6 @@ def main():
             text=df_pnl["time_label"],
         ))
 
-        # ★ 关键修改：统一单位，禁用 SI 缩写（5k/5000 混用），
-        #   持仓用整数千分位，盈亏用小数千分位。
         fig.update_layout(
             title=f"【{d['product_key']}】{inst_label}  ({d['exchange']} · {d['sector']} · broker: {d['broker']})",
             xaxis=xaxis_dict,
@@ -787,9 +869,9 @@ def main():
                 showgrid=True,
                 gridcolor='lightgray',
                 zeroline=True,
-                exponentformat="none",   # 关闭 SI 缩写
-                showexponent="none",     # 不显示指数
-                tickformat=",.0f",       # 整数 + 千分位，例：5000 → 5,000
+                exponentformat="none",
+                showexponent="none",
+                tickformat=",.0f",
             ),
             yaxis2=dict(
                 title="盈亏 (元)",
@@ -798,9 +880,9 @@ def main():
                 overlaying="y",
                 showgrid=False,
                 zeroline=True,
-                exponentformat="none",   # 关闭 SI 缩写
-                showexponent="none",     # 不显示指数
-                tickformat=",.0f",       # 与左轴统一：整数 + 千分位
+                exponentformat="none",
+                showexponent="none",
+                tickformat=",.0f",
             ),
             legend=dict(x=0.02, y=0.98, font=dict(size=9)),
             hovermode="x unified",
