@@ -441,26 +441,57 @@ def _chart_session_end(current_date: int) -> datetime.datetime:
 
 
 def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval: int = 6):
-    base = _chart_session_base(current_date)
-    end = _chart_session_end(current_date)
+    """
+    一次遍历该交易日的所有交易时段（含跨周末 / 节假日的夜盘），
+    生成 time_idx 查找表和 x 轴刻度。
+
+    ★ 刻度必须按「真实时间的分钟数」判断（如 :00 / :30），
+      不能按累加的 idx 判断，否则跨时段后会漂移到 09:29 / 10:43 之类的位置。
+    """
+    sessions = []
+    d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
+    # 夜盘前半段（前一日 21:00 ~ 23:59）
+    prev = get_previous_trade_date(current_date)
+    prev_day = datetime.datetime.strptime(str(prev), "%Y%m%d").date()
+    next_day = prev_day + timedelta(days=1)
+    sessions.append((
+        datetime.datetime.combine(prev_day, datetime.time(21, 0)),
+        datetime.datetime.combine(prev_day, datetime.time(23, 59)),
+    ))
+    sessions.append((
+        datetime.datetime.combine(next_day, datetime.time(0, 0)),
+        datetime.datetime.combine(next_day, datetime.time(2, 30)),
+    ))
+    # 日盘
+    for s, e in [
+        (datetime.time(9,  0),  datetime.time(10, 15)),
+        (datetime.time(10, 30), datetime.time(11, 30)),
+        (datetime.time(13, 30), datetime.time(15,  0)),
+    ]:
+        sessions.append((
+            datetime.datetime.combine(d.date(), s),
+            datetime.datetime.combine(d.date(), e),
+        ))
+
     dt_to_idx: dict[datetime.datetime, int] = {}
     idx_to_label: dict[int, str] = {}
     all_tick_vals: list[int] = []
     ticktext: list[str] = []
-    cur = base
     idx = 0
     label_every = tick_step * label_interval
-    while cur <= end:
-        if _in_chart_session(cur.time()):
+    for s_start, s_end in sessions:
+        cur = s_start
+        while cur <= s_end:
             key = cur.replace(second=0, microsecond=0)
             dt_to_idx[key] = idx
             label = cur.strftime("%H:%M")
             idx_to_label[idx] = label
-            if idx % tick_step == 0:
+            # ★ 用真实时间判断刻度位置
+            if cur.minute % tick_step == 0:
                 all_tick_vals.append(idx)
-                ticktext.append(label if idx % label_every == 0 else "")
+                ticktext.append(label if cur.minute % label_every == 0 else "")
             idx += 1
-        cur += timedelta(minutes=1)
+            cur += timedelta(minutes=1)
     return dt_to_idx, idx_to_label, all_tick_vals, ticktext
 
 
@@ -506,6 +537,36 @@ def _break_gaps(df: pd.DataFrame, ycol: str, max_gap: int = _CHART_MAX_GAP) -> p
         rows.append(rec)
         last_x = x
     return pd.DataFrame(rows)
+
+def _auto_tickformat(values) -> str:
+    """
+    根据数据数值范围自动选择 y 轴刻度格式。
+    - 范围窄 / 数值小（如持仓 -4 ~ -3）→ 保留 2 位小数，
+      避免 tickformat=',.0f' 把 -4.0/-3.5 都四舍五入成重复的 -4。
+    - 范围中等 → 1 位小数
+    - 范围大（如盈亏 -10,000 ~ 0）→ 整数 + 千分位
+    """
+    vals = []
+    for v in values:
+        try:
+            if v is None:
+                continue
+            fv = float(v)
+            if pd.isna(fv):
+                continue
+            vals.append(fv)
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return ",.0f"
+    vmin, vmax = min(vals), max(vals)
+    span = abs(vmax - vmin)
+    amax = max(abs(vmin), abs(vmax))
+    if span < 5 or amax < 20:
+        return ",.2f"
+    if span < 50 or amax < 500:
+        return ",.1f"
+    return ",.0f"
 
 
 def _read_position_snapshot(fpath: str) -> pd.DataFrame | None:
@@ -832,6 +893,13 @@ def _render_page():
             f"<span style='color:{get_sector_color(s)}'>■</span> {s}"
             for s in [x for x in SECTOR_ORDER if x in {d['sector'] for d in filtered_data}]
         )
+               # ★ 根据 bps 数值范围决定刻度精度
+        _bps_all_vals = []
+        for _tr in fig_bps.data:
+            if _tr.y is not None:
+                _bps_all_vals.extend([v for v in _tr.y if v is not None])
+        y_fmt_bps = _auto_tickformat(_bps_all_vals)
+
         fig_bps.update_layout(
             title=(
                 f"Contract Profit / Init Capital (Selected Contracts, "
@@ -844,7 +912,7 @@ def _render_page():
                 autorange=True,
                 exponentformat="none",
                 showexponent="none",
-                tickformat=",.0f",
+                tickformat=y_fmt_bps,     # ★ 动态
             ),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
@@ -900,7 +968,9 @@ def _render_page():
             hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
             text=df_pnl["time_label"],
         ))
-
+        # ★ 根据数值范围动态选 y 轴刻度格式
+        y_fmt_pos = _auto_tickformat(df_pos["net_pos"].tolist())
+        y_fmt_pnl = _auto_tickformat(df_pnl["cum_pnl"].tolist())
         fig.update_layout(
             title=f"【{d['product_key']}】{inst_label}  ({d['exchange']} · {d['sector']} · broker: {d['broker']})",
             xaxis=xaxis_dict,
@@ -913,7 +983,7 @@ def _render_page():
                 zeroline=True,
                 exponentformat="none",
                 showexponent="none",
-                tickformat=",.0f",
+                tickformat=y_fmt_pos,
             ),
             yaxis2=dict(
                 title="盈亏 (元)",
@@ -924,7 +994,7 @@ def _render_page():
                 zeroline=True,
                 exponentformat="none",
                 showexponent="none",
-                tickformat=",.0f",
+                tickformat=y_fmt_pos,
             ),
             legend=dict(x=0.02, y=0.98, font=dict(size=9)),
             hovermode="x unified",

@@ -1343,9 +1343,10 @@ def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval:
             dt_to_idx[key] = idx
             label = cur.strftime("%H:%M")
             idx_to_label[idx] = label
-            if idx % tick_step == 0:
+            # ★ 用真实时间的分钟数判断刻度位置，而不是累加的 idx
+            if cur.minute % tick_step == 0:
                 all_tick_vals.append(idx)
-                ticktext.append(label if idx % label_every == 0 else "")
+                ticktext.append(label if cur.minute % label_every == 0 else "")
             idx += 1
             cur += timedelta(minutes=1)
     return dt_to_idx, idx_to_label, all_tick_vals, ticktext
@@ -1395,6 +1396,36 @@ def _break_gaps(df: pd.DataFrame, ycol: str, max_gap: int = _CHART_MAX_GAP) -> p
         rows.append(rec)
         last_x = x
     return pd.DataFrame(rows)
+
+def _auto_tickformat(values) -> str:
+    """
+    根据数据数值范围自动选择 y 轴刻度格式。
+    - 范围窄 / 数值小（如持仓 -4 ~ -3）→ 保留 2 位小数，
+      避免 tickformat=',.0f' 把 -4.0/-3.5 都四舍五入成重复的 -4。
+    - 范围中等 → 1 位小数
+    - 范围大（如盈亏 -10,000 ~ 0）→ 整数 + 千分位
+    """
+    vals = []
+    for v in values:
+        try:
+            if v is None:
+                continue
+            fv = float(v)
+            if pd.isna(fv):
+                continue
+            vals.append(fv)
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return ",.0f"
+    vmin, vmax = min(vals), max(vals)
+    span = abs(vmax - vmin)
+    amax = max(abs(vmin), abs(vmax))
+    if span < 5 or amax < 20:
+        return ",.2f"
+    if span < 50 or amax < 500:
+        return ",.1f"
+    return ",.0f"
 
 
 def _read_position_snapshot(fpath: str) -> pd.DataFrame | None:
@@ -1719,10 +1750,22 @@ def draw_intraday_charts(
             ))
             has_fig2 = True
     if has_fig2:
+        # ★ 根据 bps 数值范围决定刻度精度
+        _f2_vals = []
+        for _tr in fig2.data:
+            if _tr.y is not None:
+                _f2_vals.extend([v for v in _tr.y if v is not None])
+        y_fmt2 = _auto_tickformat(_f2_vals)
         fig2.update_layout(
             title="Contract profit / Init Capital (All Products)",
             xaxis=xaxis_dict,
-            yaxis=dict(title="Profit / Init Capital (bps)", autorange=True),
+            yaxis=dict(
+                title="Profit / Init Capital (bps)",
+                autorange=True,
+                exponentformat="none",
+                showexponent="none",
+                tickformat=y_fmt2,        # ★ 动态
+            ),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
         )
@@ -1770,10 +1813,21 @@ def draw_intraday_charts(
             ))
             has_fig3 = True
     if has_fig3:
+        _f3_vals = []
+        for _tr in fig3.data:
+            if _tr.y is not None:
+                _f3_vals.extend([v for v in _tr.y if v is not None])
+        y_fmt3 = _auto_tickformat(_f3_vals)
         fig3.update_layout(
             title="Position Ratio (Current/Open) - All Products",
             xaxis=xaxis_dict,
-            yaxis=dict(title="Position Ratio", autorange=True),
+            yaxis=dict(
+                title="Position Ratio",
+                autorange=True,
+                exponentformat="none",
+                showexponent="none",
+                tickformat=y_fmt3,        # ★ 动态
+            ),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
         )
@@ -1851,6 +1905,8 @@ def draw_intraday_charts(
                     hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
                     text=df_pnl["time_label"],
                 ))
+                y_fmt_pos4 = _auto_tickformat(df_pos["net_pos"].tolist())
+                y_fmt_pnl4 = _auto_tickformat(df_pnl["cum_pnl"].tolist())
                 fig4.update_layout(
                     title=f"合约 {selected_contract} (产品 {selected_product}) 持仓与盈亏",
                     xaxis=xaxis_dict,
@@ -1861,6 +1917,9 @@ def draw_intraday_charts(
                         showgrid=True,
                         gridcolor='lightgray',
                         zeroline=True,
+                        exponentformat="none",
+                        showexponent="none",
+                        tickformat=y_fmt_pos4,     # ★ 动态
                     ),
                     yaxis2=dict(
                         title="盈亏 (元)",
@@ -1869,6 +1928,9 @@ def draw_intraday_charts(
                         overlaying="y",
                         showgrid=False,
                         zeroline=True,
+                        exponentformat="none",
+                        showexponent="none",
+                        tickformat=y_fmt_pnl4,     # ★ 动态
                     ),
                     legend=dict(x=0.02, y=0.98),
                     hovermode="x unified",
