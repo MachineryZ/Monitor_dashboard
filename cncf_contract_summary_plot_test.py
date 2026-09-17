@@ -219,21 +219,20 @@ EXCHANGE_NAMES = set(EXCHANGE_CN.values()) | {"其他"}
 SECTOR_NAMES = set(SECTOR_ORDER)
 
 # ── 板块 → 颜色映射（同一板块的合约共享同一种颜色） ──
-# 能源=蓝，其它板块用可区分的颜色；未匹配到的板块 fallback 到灰色
 SECTOR_COLORS: dict[str, str] = {
-    "能源":       "#1f77b4",  # 蓝色
-    "农副产品":   "#ff7f0e",  # 橙色
-    "化工":       "#2ca02c",  # 绿色
-    "有色":       "#d62728",  # 红色
-    "油脂油料":   "#9467bd",  # 紫色
-    "煤焦钢矿":   "#8c564b",  # 棕色
-    "谷物":       "#e377c2",  # 粉色
-    "贵金属":     "#7f7f7f",  # 灰色
-    "软商品":     "#bcbd22",  # 橄榄绿
-    "非金属建材": "#17becf",  # 青色
-    "其他-多晶硅": "#aec7e8",  # 浅蓝
-    "股指":       "#ffbb78",  # 浅橙
-    "其他":       "#c5b0d5",  # 浅紫
+    "能源":       "#1f77b4",
+    "农副产品":   "#ff7f0e",
+    "化工":       "#2ca02c",
+    "有色":       "#d62728",
+    "油脂油料":   "#9467bd",
+    "煤焦钢矿":   "#8c564b",
+    "谷物":       "#e377c2",
+    "贵金属":     "#7f7f7f",
+    "软商品":     "#bcbd22",
+    "非金属建材": "#17becf",
+    "其他-多晶硅": "#aec7e8",
+    "股指":       "#ffbb78",
+    "其他":       "#c5b0d5",
 }
 SECTOR_FALLBACK_COLOR = "#888888"
 
@@ -441,16 +440,15 @@ def _chart_session_end(current_date: int) -> datetime.datetime:
 
 
 def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval: int = 6,
-                          session_gap: int = 30):
+                          min_label_gap: int = 5):
     """
     一次遍历该交易日的所有交易时段（含跨周末 / 节假日的夜盘），
     生成 time_idx 查找表和 x 轴刻度。
 
-    ★ 刻度必须按「真实时间的分钟数」判断（如 :00 / :30），
-      不能按累加的 idx 判断，否则跨时段后会漂移到 09:29 / 10:43 之类的位置。
-    ★ 时段之间插入 session_gap 个伪分钟，防止 11:30 和 13:30 在 x 轴上
-      几乎相邻（原本只差 1 个 index）而看起来像重影；同时也让 _break_gaps
-      正确地在时段之间断开折线。
+    ★ 刻度按真实时间判断（如 :00 / :30）；
+    ★ 时段之间完全连续（不插 gap），但当两个「完整标签」的 idx 距离小于
+      min_label_gap 时，只保留前一个、后一个位置留空，
+      以避免 11:30 / 13:30 这种相邻时段边界在 x 轴上文字重叠。
     """
     sessions = []
     d = datetime.datetime.strptime(str(current_date), "%Y%m%d")
@@ -481,23 +479,26 @@ def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval:
     ticktext: list[str] = []
     idx = 0
     label_every = tick_step * label_interval
-    for s_i, (s_start, s_end) in enumerate(sessions):
-        # ★ 时段之间插入休市空隙，让 11:30 / 13:30 之类的相邻时段标签拉开
-        if s_i > 0:
-            idx += session_gap
+    last_full_label_idx = -10**9
+    for s_start, s_end in sessions:
         cur = s_start
         while cur <= s_end:
             key = cur.replace(second=0, microsecond=0)
             dt_to_idx[key] = idx
             label = cur.strftime("%H:%M")
             idx_to_label[idx] = label
-            # ★ 用真实时间判断刻度位置
             if cur.minute % tick_step == 0:
                 all_tick_vals.append(idx)
-                ticktext.append(label if cur.minute % label_every == 0 else "")
+                if (cur.minute % label_every == 0) and (idx - last_full_label_idx >= min_label_gap):
+                    ticktext.append(label)
+                    last_full_label_idx = idx
+                else:
+                    ticktext.append("")
             idx += 1
             cur += timedelta(minutes=1)
     return dt_to_idx, idx_to_label, all_tick_vals, ticktext
+
+
 def get_trade_minute_index(dt: datetime.datetime, base: datetime.datetime,
                            dt_to_idx: dict | None = None) -> int:
     if dt_to_idx is not None:
@@ -541,13 +542,13 @@ def _break_gaps(df: pd.DataFrame, ycol: str, max_gap: int = _CHART_MAX_GAP) -> p
         last_x = x
     return pd.DataFrame(rows)
 
+
 def _auto_tickformat(values) -> str:
     """
     根据数据数值范围自动选择 y 轴刻度格式。
-    - 范围窄 / 数值小（如持仓 -4 ~ -3）→ 保留 2 位小数，
-      避免 tickformat=',.0f' 把 -4.0/-3.5 都四舍五入成重复的 -4。
+    - 范围窄 / 数值小 → 2 位小数（避免 -4.0/-3.5 都四舍五入成重复的 -4）
     - 范围中等 → 1 位小数
-    - 范围大（如盈亏 -10,000 ~ 0）→ 整数 + 千分位
+    - 范围大 → 整数 + 千分位
     """
     vals = []
     for v in values:
@@ -717,7 +718,6 @@ def _render_page():
 
     current_date, _ = get_date_from_calendar()
 
-    # ── 缓存数据（每次 rerun 时如果 session_state 里没有，就重新构建） ──
     cache_key = f"all_contract_data_{current_date}"
     if cache_key not in st.session_state:
         static_paths = []
@@ -729,7 +729,6 @@ def _render_page():
                 static_paths.append(paths)
         static_df, _ = safe_read_csv(static_paths)
 
-        # 每次重建缓存时清一次价格缓存，让价格也刷新
         _price_cache.clear()
         init_price_cache("commodity", current_date)
         init_price_cache("futures", current_date)
@@ -751,7 +750,6 @@ def _render_page():
         st.error("⚠️ 没有可用的日内数据，请检查快照文件是否包含非零持仓。")
         return
 
-    # ── 统一时间刻度 ──
     dt_to_idx, idx_to_label, all_tick_vals, ticktext = build_chart_time_maps(current_date)
     if not all_tick_vals:
         st.error("⚠️ 无法生成交易时段刻度，请检查系统日期。")
@@ -771,7 +769,6 @@ def _render_page():
         zeroline=False,
     )
 
-    # ── 筛选控件 ──
     st.markdown("### 🔍 筛选条件")
     col1, col2, col3 = st.columns([1, 1, 2])
 
@@ -835,15 +832,12 @@ def _render_page():
 
     # ─────────────────────────────────────────────────
     # Contract Profit / Init Capital (bps) 折线图
-    #   ★ 同一板块的合约用同一种颜色
     # ─────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("📈 Contract Profit / Init Capital (bps)")
 
     fig_bps = go.Figure()
     has_bps = False
-    # 记录哪些板块已经加过图例（避免同一板块重复加 legend 条目）
-    sectors_seen: set[str] = set()
     for d in filtered_data:
         inst = d["instrument"]
         df = d["df"]
@@ -867,7 +861,6 @@ def _render_page():
             [d["sector"]] * len(group),
         ))
 
-        # ★ 按板块取颜色：同板块所有合约共享同一颜色
         sector_color = get_sector_color(d["sector"])
 
         fig_bps.add_trace(go.Scatter(
@@ -891,12 +884,10 @@ def _render_page():
         has_bps = True
 
     if has_bps:
-        # 板块颜色图例：把用到的板块列成一个小图例
         legend_sector_str = " / ".join(
             f"<span style='color:{get_sector_color(s)}'>■</span> {s}"
             for s in [x for x in SECTOR_ORDER if x in {d['sector'] for d in filtered_data}]
         )
-               # ★ 根据 bps 数值范围决定刻度精度
         _bps_all_vals = []
         for _tr in fig_bps.data:
             if _tr.y is not None:
@@ -915,7 +906,7 @@ def _render_page():
                 autorange=True,
                 exponentformat="none",
                 showexponent="none",
-                tickformat=y_fmt_bps,     # ★ 动态
+                tickformat=y_fmt_bps,
             ),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
@@ -923,7 +914,6 @@ def _render_page():
             margin=dict(l=60, r=40, t=60, b=40),
         )
         st.plotly_chart(fig_bps, width="stretch", key="bps_chart")
-        # 板块颜色对照（写在小字下面，方便确认哪个颜色是哪个板块）
         st.markdown(
             f"<div style='font-size: 13px; color: #555;'>板块颜色对照：{legend_sector_str}</div>",
             unsafe_allow_html=True,
@@ -932,7 +922,7 @@ def _render_page():
         st.info("没有可用于绘制 盈亏/初始资金 曲线的合约数据。")
 
     # ─────────────────────────────────────────────────
-    # 每个合约的小图（保持原样：持仓=蓝，盈亏=红）
+    # 每个合约的小图
     # ─────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("📊 Per-Contract Position & PnL")
@@ -971,7 +961,6 @@ def _render_page():
             hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
             text=df_pnl["time_label"],
         ))
-        # ★ 根据数值范围动态选 y 轴刻度格式
         y_fmt_pos = _auto_tickformat(df_pos["net_pos"].tolist())
         y_fmt_pnl = _auto_tickformat(df_pnl["cum_pnl"].tolist())
         fig.update_layout(
@@ -997,7 +986,7 @@ def _render_page():
                 zeroline=True,
                 exponentformat="none",
                 showexponent="none",
-                tickformat=y_fmt_pos,
+                tickformat=y_fmt_pnl,
             ),
             legend=dict(x=0.02, y=0.98, font=dict(size=9)),
             hovermode="x unified",
@@ -1006,7 +995,6 @@ def _render_page():
         )
         chart_list.append(fig)
 
-    # ── 每行3个图布局 ──
     cols_per_row = 3
     for i in range(0, len(chart_list), cols_per_row):
         cols = st.columns(cols_per_row)
@@ -1023,11 +1011,10 @@ def _render_page():
     )
 
 
-# ── 自动刷新包装（固定间隔，无 UI） ────────────────────────
+# ── 自动刷新包装 ────────────────────────────────────────
 def main():
     st.set_page_config(page_title="All Contracts Summary", layout="wide")
 
-    # ── 页面渲染（内部出错也不影响自动刷新） ──
     try:
         _render_page()
     except Exception as e:
@@ -1035,7 +1022,6 @@ def main():
         st.error(f"页面渲染出错：{e}")
         st.code(traceback.format_exc())
 
-    # ── 固定间隔自动刷新：sleep → 清数据缓存 → rerun ──
     time.sleep(REFRESH_INTERVAL_SECONDS)
     for _k in list(st.session_state.keys()):
         if _k.startswith("all_contract_data_"):

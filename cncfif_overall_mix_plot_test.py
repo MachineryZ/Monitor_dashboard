@@ -1324,15 +1324,17 @@ def _get_sessions_for_trading_day(current_date: int) -> list[tuple[datetime.date
         ))
     return sessions
 
+
 def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval: int = 6,
-                          session_gap: int = 30):
+                          min_label_gap: int = 5):
     """
     一次遍历该交易日的所有交易时段（含跨周末 / 节假日的夜盘），
     生成 time_idx 查找表和 x 轴刻度。
 
     ★ 刻度按真实时间判断（如 :00 / :30）；
-    ★ 时段之间插入 session_gap 个伪分钟，防止 11:30 和 13:30 在 x 轴上
-      几乎相邻而看起来像重影；同时也让 _break_gaps 正确跨时段断线。
+    ★ 时段之间完全连续（不插 gap），但当两个「完整标签」的 idx 距离小于
+      min_label_gap 时，只保留前一个、后一个位置留空，
+      以避免 11:30 / 13:30 这种相邻时段边界在 x 轴上文字重叠。
     """
     sessions = _get_sessions_for_trading_day(current_date)
     dt_to_idx: dict[datetime.datetime, int] = {}
@@ -1341,23 +1343,26 @@ def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval:
     ticktext: list[str] = []
     idx = 0
     label_every = tick_step * label_interval
-    for s_i, (s_start, s_end) in enumerate(sessions):
-        # ★ 时段之间插入休市空隙
-        if s_i > 0:
-            idx += session_gap
+    last_full_label_idx = -10**9
+    for s_start, s_end in sessions:
         cur = s_start
         while cur <= s_end:
             key = cur.replace(second=0, microsecond=0)
             dt_to_idx[key] = idx
             label = cur.strftime("%H:%M")
             idx_to_label[idx] = label
-            # ★ 用真实时间的分钟数判断刻度位置，而不是累加的 idx
             if cur.minute % tick_step == 0:
                 all_tick_vals.append(idx)
-                ticktext.append(label if cur.minute % label_every == 0 else "")
+                if (cur.minute % label_every == 0) and (idx - last_full_label_idx >= min_label_gap):
+                    ticktext.append(label)
+                    last_full_label_idx = idx
+                else:
+                    ticktext.append("")
             idx += 1
             cur += timedelta(minutes=1)
     return dt_to_idx, idx_to_label, all_tick_vals, ticktext
+
+
 def get_trade_minute_index(dt: datetime.datetime, base: datetime.datetime,
                            dt_to_idx: dict | None = None) -> int:
     if dt_to_idx is not None:
