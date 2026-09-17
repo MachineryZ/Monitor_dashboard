@@ -1,4 +1,5 @@
 import os
+import time
 import datetime
 import pandas as pd
 import numpy as np
@@ -10,6 +11,11 @@ import re
 # ── 配置与常量 ──────────────────────────────────────
 CALENDAR_PATH = "/cpfs/intrastats/calendar"
 _price_cache: dict[str, float] = {}
+
+DEFAULT_INIT_CAP = 100_000_000.0
+
+# ★ 自动刷新间隔（秒），想改成别的数字直接改这里
+REFRESH_INTERVAL_SECONDS = 300
 
 PRODUCT_CONFIGS = [
     {
@@ -211,6 +217,29 @@ for _v in ["IC", "IF", "IH", "IM"]:
 
 EXCHANGE_NAMES = set(EXCHANGE_CN.values()) | {"其他"}
 SECTOR_NAMES = set(SECTOR_ORDER)
+
+# ── 板块 → 颜色映射（同一板块的合约共享同一种颜色） ──
+# 能源=蓝，其它板块用可区分的颜色；未匹配到的板块 fallback 到灰色
+SECTOR_COLORS: dict[str, str] = {
+    "能源":       "#1f77b4",  # 蓝色
+    "农副产品":   "#ff7f0e",  # 橙色
+    "化工":       "#2ca02c",  # 绿色
+    "有色":       "#d62728",  # 红色
+    "油脂油料":   "#9467bd",  # 紫色
+    "煤焦钢矿":   "#8c564b",  # 棕色
+    "谷物":       "#e377c2",  # 粉色
+    "贵金属":     "#7f7f7f",  # 灰色
+    "软商品":     "#bcbd22",  # 橄榄绿
+    "非金属建材": "#17becf",  # 青色
+    "其他-多晶硅": "#aec7e8",  # 浅蓝
+    "股指":       "#ffbb78",  # 浅橙
+    "其他":       "#c5b0d5",  # 浅紫
+}
+SECTOR_FALLBACK_COLOR = "#888888"
+
+
+def get_sector_color(sector: str) -> str:
+    return SECTOR_COLORS.get(sector, SECTOR_FALLBACK_COLOR)
 
 
 def lookup_variety_cn(variety: str) -> str:
@@ -618,14 +647,13 @@ def build_intraday_series(
     return result if result else None
 
 
-# ── 主页面 ─────────────────────────────────────────────
-def main():
-    st.set_page_config(page_title="All Contracts Summary", layout="wide")
+# ── 页面渲染 ─────────────────────────────────────────────
+def _render_page():
     st.title("📊 All Contracts: Position & PnL (Intraday)")
 
     current_date, _ = get_date_from_calendar()
 
-    # ── 缓存数据 ──
+    # ── 缓存数据（每次 rerun 时如果 session_state 里没有，就重新构建） ──
     cache_key = f"all_contract_data_{current_date}"
     if cache_key not in st.session_state:
         static_paths = []
@@ -637,6 +665,8 @@ def main():
                 static_paths.append(paths)
         static_df, _ = safe_read_csv(static_paths)
 
+        # 每次重建缓存时清一次价格缓存，让价格也刷新
+        _price_cache.clear()
         init_price_cache("commodity", current_date)
         init_price_cache("futures", current_date)
 
@@ -739,7 +769,103 @@ def main():
 
     filtered_data.sort(key=lambda d: (d["product_key"], d["exchange"], d["sector"], d["instrument"]))
 
-    # ── 构建每个合约的图表 ──
+    # ─────────────────────────────────────────────────
+    # Contract Profit / Init Capital (bps) 折线图
+    #   ★ 同一板块的合约用同一种颜色
+    # ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("📈 Contract Profit / Init Capital (bps)")
+
+    fig_bps = go.Figure()
+    has_bps = False
+    # 记录哪些板块已经加过图例（避免同一板块重复加 legend 条目）
+    sectors_seen: set[str] = set()
+    for d in filtered_data:
+        inst = d["instrument"]
+        df = d["df"]
+        if df is None or df.empty:
+            continue
+        init_cap = DEFAULT_INIT_CAP
+        for _c in PRODUCT_CONFIGS:
+            if _c.get("product") == d["product_name"] and _c.get("init_capital", 0) > 0:
+                init_cap = float(_c["init_capital"])
+                break
+
+        group = df[["time_idx", "time_label", "cum_pnl"]].copy()
+        group["pnl_ratio"] = (group["cum_pnl"] / init_cap * 10000) if init_cap != 0 else 0.0
+        group = group.sort_values("time_idx")
+        group = _break_gaps(group, "pnl_ratio")
+        customdata = np.column_stack((
+            [d["product_key"]] * len(group),
+            [inst] * len(group),
+            group["cum_pnl"],
+            [init_cap] * len(group),
+            [d["sector"]] * len(group),
+        ))
+
+        # ★ 按板块取颜色：同板块所有合约共享同一颜色
+        sector_color = get_sector_color(d["sector"])
+
+        fig_bps.add_trace(go.Scatter(
+            x=group["time_idx"],
+            y=group["pnl_ratio"],
+            mode="lines",
+            name=f"{d['product_key']}_{inst}",
+            line=dict(shape="hv", width=1, color=sector_color),
+            connectgaps=False,
+            customdata=customdata,
+            hovertemplate=(
+                "时间: %{text}<br>"
+                "盈亏/初始资金: %{y:.2f} bps<br>"
+                "盈亏: %{customdata[2]:,.2f} / %{customdata[3]:,.2f}<br>"
+                "产品: %{customdata[0]}<br>"
+                "合约: %{customdata[1]}<br>"
+                "板块: %{customdata[4]}<extra></extra>"
+            ),
+            text=group["time_label"],
+        ))
+        has_bps = True
+
+    if has_bps:
+        # 板块颜色图例：把用到的板块列成一个小图例
+        legend_sector_str = " / ".join(
+            f"<span style='color:{get_sector_color(s)}'>■</span> {s}"
+            for s in [x for x in SECTOR_ORDER if x in {d['sector'] for d in filtered_data}]
+        )
+        fig_bps.update_layout(
+            title=(
+                f"Contract Profit / Init Capital (Selected Contracts, "
+                f"product={selected_product}, group={selected_group}, "
+                f"init_cap default={DEFAULT_INIT_CAP:,.0f})"
+            ),
+            xaxis=xaxis_dict,
+            yaxis=dict(
+                title="Profit / Init Capital (bps)",
+                autorange=True,
+                exponentformat="none",
+                showexponent="none",
+                tickformat=",.0f",
+            ),
+            legend_title="Contracts (Product_Instrument)",
+            hovermode="x unified",
+            height=450,
+            margin=dict(l=60, r=40, t=60, b=40),
+        )
+        st.plotly_chart(fig_bps, width="stretch", key="bps_chart")
+        # 板块颜色对照（写在小字下面，方便确认哪个颜色是哪个板块）
+        st.markdown(
+            f"<div style='font-size: 13px; color: #555;'>板块颜色对照：{legend_sector_str}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("没有可用于绘制 盈亏/初始资金 曲线的合约数据。")
+
+    # ─────────────────────────────────────────────────
+    # 每个合约的小图（保持原样：持仓=蓝，盈亏=红）
+    # ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("📊 Per-Contract Position & PnL")
+
     chart_list = []
     for d in filtered_data:
         df_sorted = d["df"].sort_values("time_idx").copy()
@@ -775,8 +901,6 @@ def main():
             text=df_pnl["time_label"],
         ))
 
-        # ★ 关键修改：统一单位，禁用 SI 缩写（5k/5000 混用），
-        #   持仓用整数千分位，盈亏用小数千分位。
         fig.update_layout(
             title=f"【{d['product_key']}】{inst_label}  ({d['exchange']} · {d['sector']} · broker: {d['broker']})",
             xaxis=xaxis_dict,
@@ -787,9 +911,9 @@ def main():
                 showgrid=True,
                 gridcolor='lightgray',
                 zeroline=True,
-                exponentformat="none",   # 关闭 SI 缩写
-                showexponent="none",     # 不显示指数
-                tickformat=",.0f",       # 整数 + 千分位，例：5000 → 5,000
+                exponentformat="none",
+                showexponent="none",
+                tickformat=",.0f",
             ),
             yaxis2=dict(
                 title="盈亏 (元)",
@@ -798,9 +922,9 @@ def main():
                 overlaying="y",
                 showgrid=False,
                 zeroline=True,
-                exponentformat="none",   # 关闭 SI 缩写
-                showexponent="none",     # 不显示指数
-                tickformat=",.0f",       # 与左轴统一：整数 + 千分位
+                exponentformat="none",
+                showexponent="none",
+                tickformat=",.0f",
             ),
             legend=dict(x=0.02, y=0.98, font=dict(size=9)),
             hovermode="x unified",
@@ -824,6 +948,26 @@ def main():
         f"产品：{selected_product} | 交易所/板块：{selected_group} | "
         f"共展示 {len(chart_list)} 个合约图表"
     )
+
+
+# ── 自动刷新包装（固定间隔，无 UI） ────────────────────────
+def main():
+    st.set_page_config(page_title="All Contracts Summary", layout="wide")
+
+    # ── 页面渲染（内部出错也不影响自动刷新） ──
+    try:
+        _render_page()
+    except Exception as e:
+        import traceback
+        st.error(f"页面渲染出错：{e}")
+        st.code(traceback.format_exc())
+
+    # ── 固定间隔自动刷新：sleep → 清数据缓存 → rerun ──
+    time.sleep(REFRESH_INTERVAL_SECONDS)
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("all_contract_data_"):
+            del st.session_state[_k]
+    st.rerun()
 
 
 if __name__ == "__main__":

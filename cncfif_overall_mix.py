@@ -1082,6 +1082,8 @@ def calculate_product(
     data["margin"]           = margin
     init_capital = resolve_init_capital(cfg, (pre_balance + deposit - withdraw), balance)
     data["init_capital"] = init_capital
+    if data["product"] == "ax1h_ya": 
+        print(f"ax1h_ya: {resolve_init_capital}")
     
     # ★ 新增：获取银行账户余额并计算 bank 列
     try:
