@@ -1,4 +1,3 @@
-
 import os
 import time
 import math
@@ -16,6 +15,9 @@ import re  # 新增
 # ── 新增：Plotly 用于图表 ──
 import plotly.graph_objects as go
 from datetime import timedelta
+
+# ── ★ 自动刷新间隔（秒），想改成别的数字直接改这里 ──
+REFRESH_INTERVAL_SECONDS = 300
 
 # ── RWP API 配置 ──────────────────────────────────────
 RWP_CREDENTIALS = {
@@ -150,6 +152,52 @@ PRODUCT_CONFIGS = [
         "db_product":   None,
     },
 ]
+
+
+# ── 品种 / 板块映射 ────────────────────────────────
+def extract_variety(inst: str) -> str:
+    m = re.match(r"^([A-Za-z]+)", str(inst))
+    return m.group(1) if m else str(inst)
+
+def _match_variety_key(mapping: dict, variety: str):
+    if variety in mapping:
+        return mapping[variety]
+    vl = variety.lower()
+    for k, v in mapping.items():
+        if k.lower() == vl:
+            return v
+    return None
+
+VARIETY_SECTOR: dict[str, str] = {}
+for _v in ["AP", "CJ", "CS", "JD", "LG", "LH"]:
+    VARIETY_SECTOR[_v] = "农副产品"
+for _v in ["BR", "BU", "EB", "EG", "L", "MA", "NR", "PF", "PP", "PR",
+           "PX", "RU", "SA", "SH", "SP", "TA", "UR"]:
+    VARIETY_SECTOR[_v] = "化工"
+for _v in ["AL", "AO", "BC", "CU", "LC", "NI", "PB", "SI", "SN", "ZN"]:
+    VARIETY_SECTOR[_v] = "有色"
+for _v in ["A", "B", "M", "OI", "P", "PK", "RM", "RS", "Y"]:
+    VARIETY_SECTOR[_v] = "油脂油料"
+for _v in ["HC", "I", "J", "JM", "RB", "SF", "SM", "SS", "WR"]:
+    VARIETY_SECTOR[_v] = "煤焦钢矿"
+for _v in ["FU", "LU", "PG", "SC", "ZC"]:
+    VARIETY_SECTOR[_v] = "能源"
+for _v in ["C", "JR", "LR", "PM", "RI", "RR", "WH"]:
+    VARIETY_SECTOR[_v] = "谷物"
+for _v in ["AG", "AU"]:
+    VARIETY_SECTOR[_v] = "贵金属"
+for _v in ["CF", "CY", "SR"]:
+    VARIETY_SECTOR[_v] = "软商品"
+for _v in ["FG", "BB", "FB", "V"]:
+    VARIETY_SECTOR[_v] = "非金属建材"
+for _v in ["PS"]:
+    VARIETY_SECTOR[_v] = "其他-多晶硅"
+for _v in ["IC", "IF", "IH", "IM"]:
+    VARIETY_SECTOR[_v] = "股指"
+
+def lookup_sector(variety: str) -> str:
+    sector = _match_variety_key(VARIETY_SECTOR, variety)
+    return sector if sector else "其他"
 
 # ─────────────────────────────────────────────
 # RWP API 交互函数（不变）
@@ -998,6 +1046,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
                     instrument_margin_max = max(inst_margin_long, instrument_margin_max)
                     row_dict = {
                         "instrument":        inst,
+                        "板块":               lookup_sector(extract_variety(inst)),
                         "market_value":      round(inst_market_value_long, 2),
                         "position":          int(long_pos),
                         "yd_position":       long_yd_pos,
@@ -1032,6 +1081,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
                     instrument_margin_max = max(inst_margin_short, instrument_margin_max)
                     row_dict = {
                         "instrument":        inst,
+                        "板块":               lookup_sector(extract_variety(inst)),
                         "market_value":      round(inst_market_value_short, 2),
                         "position":          -int(short_pos),
                         "yd_position":       -int(short_yd_pos),
@@ -1058,6 +1108,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
         if long_pos == 0 and short_pos == 0 and risk_pos is not None and risk_pos != 0:
             row_dict = {
                 "instrument":        inst,
+                        "板块":               lookup_sector(extract_variety(inst)),
                 "market_value":      0,
                 "position":          0,
                 "yd_position":       0,
@@ -1108,7 +1159,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
     if is_position_empty:
         empty_detail_df = pd.DataFrame(columns=[
-            "instrument", "market_value", "position", "yd_position", "today_position",
+            "instrument", "板块", "market_value", "position", "yd_position", "today_position",
             "risk_position", "clip", "uplimit", "position_type", "close_profit",
             "position_profit", "total_pnl", "instrument_margin", "exchange",
             "last_trade_time", "risk_match", "_warnings",
@@ -1322,10 +1373,17 @@ def _get_sessions_for_trading_day(current_date: int) -> list[tuple[datetime.date
         ))
     return sessions
 
-def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval: int = 6):
+
+def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval: int = 6,
+                          min_label_gap: int = 5):
     """
     一次遍历该交易日的所有交易时段（含跨周末 / 节假日的夜盘），
     生成 time_idx 查找表和 x 轴刻度。
+
+    ★ 刻度按真实时间判断（如 :00 / :30）；
+    ★ 时段之间完全连续（不插 gap），但当两个「完整标签」的 idx 距离小于
+      min_label_gap 时，只保留前一个、后一个位置留空，
+      以避免 11:30 / 13:30 这种相邻时段边界在 x 轴上文字重叠。
     """
     sessions = _get_sessions_for_trading_day(current_date)
     dt_to_idx: dict[datetime.datetime, int] = {}
@@ -1334,6 +1392,7 @@ def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval:
     ticktext: list[str] = []
     idx = 0
     label_every = tick_step * label_interval
+    last_full_label_idx = -10**9
     for s_start, s_end in sessions:
         cur = s_start
         while cur <= s_end:
@@ -1341,9 +1400,13 @@ def build_chart_time_maps(current_date: int, tick_step: int = 5, label_interval:
             dt_to_idx[key] = idx
             label = cur.strftime("%H:%M")
             idx_to_label[idx] = label
-            if idx % tick_step == 0:
+            if cur.minute % tick_step == 0:
                 all_tick_vals.append(idx)
-                ticktext.append(label if idx % label_every == 0 else "")
+                if (cur.minute % label_every == 0) and (idx - last_full_label_idx >= min_label_gap):
+                    ticktext.append(label)
+                    last_full_label_idx = idx
+                else:
+                    ticktext.append("")
             idx += 1
             cur += timedelta(minutes=1)
     return dt_to_idx, idx_to_label, all_tick_vals, ticktext
@@ -1393,6 +1456,36 @@ def _break_gaps(df: pd.DataFrame, ycol: str, max_gap: int = _CHART_MAX_GAP) -> p
         rows.append(rec)
         last_x = x
     return pd.DataFrame(rows)
+
+def _auto_tickformat(values) -> str:
+    """
+    根据数据数值范围自动选择 y 轴刻度格式。
+    - 范围窄 / 数值小（如持仓 -4 ~ -3）→ 保留 2 位小数，
+      避免 tickformat=',.0f' 把 -4.0/-3.5 都四舍五入成重复的 -4。
+    - 范围中等 → 1 位小数
+    - 范围大（如盈亏 -10,000 ~ 0）→ 整数 + 千分位
+    """
+    vals = []
+    for v in values:
+        try:
+            if v is None:
+                continue
+            fv = float(v)
+            if pd.isna(fv):
+                continue
+            vals.append(fv)
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return ",.0f"
+    vmin, vmax = min(vals), max(vals)
+    span = abs(vmax - vmin)
+    amax = max(abs(vmin), abs(vmax))
+    if span < 5 or amax < 20:
+        return ",.2f"
+    if span < 50 or amax < 500:
+        return ",.1f"
+    return ",.0f"
 
 
 def _read_position_snapshot(fpath: str) -> pd.DataFrame | None:
@@ -1717,10 +1810,22 @@ def draw_intraday_charts(
             ))
             has_fig2 = True
     if has_fig2:
+        # ★ 根据 bps 数值范围决定刻度精度
+        _f2_vals = []
+        for _tr in fig2.data:
+            if _tr.y is not None:
+                _f2_vals.extend([v for v in _tr.y if v is not None])
+        y_fmt2 = _auto_tickformat(_f2_vals)
         fig2.update_layout(
             title="Contract profit / Init Capital (All Products)",
             xaxis=xaxis_dict,
-            yaxis=dict(title="Profit / Init Capital (bps)", autorange=True),
+            yaxis=dict(
+                title="Profit / Init Capital (bps)",
+                autorange=True,
+                exponentformat="none",
+                showexponent="none",
+                tickformat=y_fmt2,        # ★ 动态
+            ),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
         )
@@ -1768,10 +1873,21 @@ def draw_intraday_charts(
             ))
             has_fig3 = True
     if has_fig3:
+        _f3_vals = []
+        for _tr in fig3.data:
+            if _tr.y is not None:
+                _f3_vals.extend([v for v in _tr.y if v is not None])
+        y_fmt3 = _auto_tickformat(_f3_vals)
         fig3.update_layout(
             title="Position Ratio (Current/Open) - All Products",
             xaxis=xaxis_dict,
-            yaxis=dict(title="Position Ratio", autorange=True),
+            yaxis=dict(
+                title="Position Ratio",
+                autorange=True,
+                exponentformat="none",
+                showexponent="none",
+                tickformat=y_fmt3,        # ★ 动态
+            ),
             legend_title="Contracts (Product_Instrument)",
             hovermode="x unified",
         )
@@ -1849,6 +1965,8 @@ def draw_intraday_charts(
                     hovertemplate="时间: %{text}<br>盈亏: %{y:,.2f} 元<extra></extra>",
                     text=df_pnl["time_label"],
                 ))
+                y_fmt_pos4 = _auto_tickformat(df_pos["net_pos"].tolist())
+                y_fmt_pnl4 = _auto_tickformat(df_pnl["cum_pnl"].tolist())
                 fig4.update_layout(
                     title=f"合约 {selected_contract} (产品 {selected_product}) 持仓与盈亏",
                     xaxis=xaxis_dict,
@@ -1859,6 +1977,9 @@ def draw_intraday_charts(
                         showgrid=True,
                         gridcolor='lightgray',
                         zeroline=True,
+                        exponentformat="none",
+                        showexponent="none",
+                        tickformat=y_fmt_pos4,     # ★ 动态
                     ),
                     yaxis2=dict(
                         title="盈亏 (元)",
@@ -1867,6 +1988,9 @@ def draw_intraday_charts(
                         overlaying="y",
                         showgrid=False,
                         zeroline=True,
+                        exponentformat="none",
+                        showexponent="none",
+                        tickformat=y_fmt_pnl4,     # ★ 动态
                     ),
                     legend=dict(x=0.02, y=0.98),
                     hovermode="x unified",
@@ -2113,7 +2237,7 @@ def dashboard():
                     title += " (清仓)"
                 with st.expander(title, expanded=False):
                     display_cols = [
-                        "instrument", "market_value",
+                        "instrument", "板块", "market_value",
                         "position", "yd_position", "today_position", "risk_position", "clip", "uplimit",
                         "close_profit", "position_profit", "total_pnl",
                         "instrument_margin", "exchange", "last_trade_time",
@@ -2140,6 +2264,7 @@ def dashboard():
                         display_ddf["uplimit"] = display_ddf["uplimit"].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None)
                     col_mapping = {
                         "instrument":          "合约名称",
+                        "板块":                 "板块",
                         "market_value":        "合约市值",
                         "position":            "持仓数量",
                         "yd_position":         "昨仓",
@@ -2220,7 +2345,19 @@ def dashboard():
             import traceback
             st.error(traceback.format_exc())
 
-    time.sleep(300)
+    # ── ★ 自动刷新：睡固定间隔 → 清日内数据 / 价格 / 银行余额缓存 → rerun ──
+    # 1) 先 sleep，用户在这段时间看到的仍是旧图（不会闪白屏）
+    # 2) 然后清掉三类缓存，保证下一次 rerun 会重新读文件
+    #    - all_product_data_* : 日内 position_data 快照缓存
+    #    - _price_cache       : 全局价格缓存
+    #    - _rwp_api_cache     : RWP 银行余额缓存（否则账上钱不更新）
+    # 3) rerun 触发下一次完整渲染
+    time.sleep(REFRESH_INTERVAL_SECONDS)
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("all_product_data_"):
+            del st.session_state[_k]
+    _price_cache.clear()
+    _rwp_api_cache.clear()
     st.rerun()
 
 if __name__ == "__main__":

@@ -153,6 +153,52 @@ PRODUCT_CONFIGS = [
     },
 ]
 
+
+# ── 品种 / 板块映射 ────────────────────────────────
+def extract_variety(inst: str) -> str:
+    m = re.match(r"^([A-Za-z]+)", str(inst))
+    return m.group(1) if m else str(inst)
+
+def _match_variety_key(mapping: dict, variety: str):
+    if variety in mapping:
+        return mapping[variety]
+    vl = variety.lower()
+    for k, v in mapping.items():
+        if k.lower() == vl:
+            return v
+    return None
+
+VARIETY_SECTOR: dict[str, str] = {}
+for _v in ["AP", "CJ", "CS", "JD", "LG", "LH"]:
+    VARIETY_SECTOR[_v] = "农副产品"
+for _v in ["BR", "BU", "EB", "EG", "L", "MA", "NR", "PF", "PP", "PR",
+           "PX", "RU", "SA", "SH", "SP", "TA", "UR"]:
+    VARIETY_SECTOR[_v] = "化工"
+for _v in ["AL", "AO", "BC", "CU", "LC", "NI", "PB", "SI", "SN", "ZN"]:
+    VARIETY_SECTOR[_v] = "有色"
+for _v in ["A", "B", "M", "OI", "P", "PK", "RM", "RS", "Y"]:
+    VARIETY_SECTOR[_v] = "油脂油料"
+for _v in ["HC", "I", "J", "JM", "RB", "SF", "SM", "SS", "WR"]:
+    VARIETY_SECTOR[_v] = "煤焦钢矿"
+for _v in ["FU", "LU", "PG", "SC", "ZC"]:
+    VARIETY_SECTOR[_v] = "能源"
+for _v in ["C", "JR", "LR", "PM", "RI", "RR", "WH"]:
+    VARIETY_SECTOR[_v] = "谷物"
+for _v in ["AG", "AU"]:
+    VARIETY_SECTOR[_v] = "贵金属"
+for _v in ["CF", "CY", "SR"]:
+    VARIETY_SECTOR[_v] = "软商品"
+for _v in ["FG", "BB", "FB", "V"]:
+    VARIETY_SECTOR[_v] = "非金属建材"
+for _v in ["PS"]:
+    VARIETY_SECTOR[_v] = "其他-多晶硅"
+for _v in ["IC", "IF", "IH", "IM"]:
+    VARIETY_SECTOR[_v] = "股指"
+
+def lookup_sector(variety: str) -> str:
+    sector = _match_variety_key(VARIETY_SECTOR, variety)
+    return sector if sector else "其他"
+
 # ─────────────────────────────────────────────
 # RWP API 交互函数（不变）
 # ─────────────────────────────────────────────
@@ -1000,6 +1046,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
                     instrument_margin_max = max(inst_margin_long, instrument_margin_max)
                     row_dict = {
                         "instrument":        inst,
+                        "板块":               lookup_sector(extract_variety(inst)),
                         "market_value":      round(inst_market_value_long, 2),
                         "position":          int(long_pos),
                         "yd_position":       long_yd_pos,
@@ -1034,6 +1081,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
                     instrument_margin_max = max(inst_margin_short, instrument_margin_max)
                     row_dict = {
                         "instrument":        inst,
+                        "板块":               lookup_sector(extract_variety(inst)),
                         "market_value":      round(inst_market_value_short, 2),
                         "position":          -int(short_pos),
                         "yd_position":       -int(short_yd_pos),
@@ -1060,6 +1108,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
         if long_pos == 0 and short_pos == 0 and risk_pos is not None and risk_pos != 0:
             row_dict = {
                 "instrument":        inst,
+                        "板块":               lookup_sector(extract_variety(inst)),
                 "market_value":      0,
                 "position":          0,
                 "yd_position":       0,
@@ -1110,7 +1159,7 @@ def calculate_product(cfg: dict, path: str, broker: str, product: str, market: s
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
     if is_position_empty:
         empty_detail_df = pd.DataFrame(columns=[
-            "instrument", "market_value", "position", "yd_position", "today_position",
+            "instrument", "板块", "market_value", "position", "yd_position", "today_position",
             "risk_position", "clip", "uplimit", "position_type", "close_profit",
             "position_profit", "total_pnl", "instrument_margin", "exchange",
             "last_trade_time", "risk_match", "_warnings",
@@ -2188,7 +2237,7 @@ def dashboard():
                     title += " (清仓)"
                 with st.expander(title, expanded=False):
                     display_cols = [
-                        "instrument", "market_value",
+                        "instrument", "板块", "market_value",
                         "position", "yd_position", "today_position", "risk_position", "clip", "uplimit",
                         "close_profit", "position_profit", "total_pnl",
                         "instrument_margin", "exchange", "last_trade_time",
@@ -2215,6 +2264,7 @@ def dashboard():
                         display_ddf["uplimit"] = display_ddf["uplimit"].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) and x is not None else None)
                     col_mapping = {
                         "instrument":          "合约名称",
+                        "板块":                 "板块",
                         "market_value":        "合约市值",
                         "position":            "持仓数量",
                         "yd_position":         "昨仓",
