@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import re
 import requests
 import json
 import datetime
@@ -138,6 +139,131 @@ PRODUCT_CONFIGS = [
         "db_product":   None,
     },
 ]
+
+# ── 交易所 / 品种中文名 / 板块（与 all_contracts_summary 一致） ──
+EXCHANGE_CN = {
+    "SHFE":  "上期所",
+    "DCE":   "大商所",
+    "CZCE":  "郑商所",
+    "CFFEX": "中金所",
+    "INE":   "上期能源",
+    "GFEX":  "广期所",
+}
+VARIETY_EXCHANGE: dict[str, str] = {}
+for _v in ["cu", "al", "zn", "pb", "ni", "sn", "au", "ag", "rb", "hc",
+           "ss", "bu", "ru", "sp", "fu", "wr", "ao", "br"]:
+    VARIETY_EXCHANGE[_v] = "SHFE"
+for _v in ["a", "b", "c", "cs", "i", "j", "jd", "jm", "l", "m", "p",
+           "pp", "v", "y", "eg", "eb", "rr", "pg", "lh", "bb", "fb", "LG"]:
+    VARIETY_EXCHANGE[_v] = "DCE"
+for _v in ["SR", "CF", "TA", "MA", "FG", "RM", "OI", "ZC", "AP", "CJ",
+           "UR", "SA", "PF", "PK", "SF", "SM", "WH", "PM", "RI", "LR",
+           "JR", "CY", "RS", "SH", "PX", "PR"]:
+    VARIETY_EXCHANGE[_v] = "CZCE"
+for _v in ["IF", "IC", "IH", "IM", "T", "TF", "TS", "TL"]:
+    VARIETY_EXCHANGE[_v] = "CFFEX"
+for _v in ["sc", "lu", "nr", "bc", "ec"]:
+    VARIETY_EXCHANGE[_v] = "INE"
+for _v in ["si", "lc", "ps"]:
+    VARIETY_EXCHANGE[_v] = "GFEX"
+
+VARIETY_CN: dict[str, str] = {
+    "AP": "苹果", "CJ": "红枣", "CS": "玉米淀粉", "JD": "鸡蛋", "LG": "原木", "LH": "生猪",
+    "BR": "合成橡胶", "BU": "沥青", "EB": "苯乙烯", "EG": "乙二醇", "L": "塑料",
+    "MA": "甲醇", "NR": "20号胶", "PF": "短纤", "PP": "聚丙烯", "PR": "瓶片",
+    "PX": "对二甲苯", "RU": "橡胶", "SA": "纯碱", "SH": "烧碱", "SP": "纸浆",
+    "TA": "精对苯二甲酸", "UR": "尿素",
+    "AL": "沪铝", "AO": "氧化铝", "BC": "国际铜", "CU": "沪铜", "LC": "碳酸锂",
+    "NI": "沪镍", "PB": "沪铅", "SI": "工业硅", "SN": "沪锡", "ZN": "沪锌",
+    "A": "豆一", "B": "豆二", "M": "豆粕", "OI": "菜油", "P": "棕榈油",
+    "PK": "花生", "RM": "菜粕", "RS": "菜籽", "Y": "豆油",
+    "HC": "热卷", "I": "铁矿石", "J": "焦炭", "JM": "焦煤", "RB": "螺纹钢",
+    "SF": "硅铁", "SM": "锰硅", "SS": "不锈钢", "WR": "线材",
+    "FU": "燃油", "LU": "低硫燃油", "PG": "液化石油气", "SC": "原油", "ZC": "动力煤",
+    "C": "玉米", "JR": "粳稻", "LR": "晚籼稻", "PM": "普麦", "RI": "早籼稻",
+    "RR": "粳米", "WH": "强麦",
+    "AG": "沪银", "AU": "沪金",
+    "CF": "棉花", "CY": "棉纱", "SR": "白糖",
+    "FG": "玻璃", "BB": "胶合板", "FB": "纤维板", "V": "聚氯乙烯",
+    "PS": "多晶硅",
+    "IC": "中证500股指", "IF": "沪深300股指", "IH": "上证50股指", "IM": "中证1000股指",
+    "T": "十年期国债", "TF": "五年期国债", "TS": "二年期国债", "TL": "三十年期国债",
+    "EC": "欧线集运",
+}
+SECTOR_ORDER = [
+    "农副产品", "化工", "有色", "油脂油料", "煤焦钢矿", "能源",
+    "谷物", "贵金属", "软商品", "非金属建材", "其他-多晶硅", "股指", "其他",
+]
+VARIETY_SECTOR: dict[str, str] = {}
+for _v in ["AP", "CJ", "CS", "JD", "LG", "LH"]:
+    VARIETY_SECTOR[_v] = "农副产品"
+for _v in ["BR", "BU", "EB", "EG", "L", "MA", "NR", "PF", "PP", "PR",
+           "PX", "RU", "SA", "SH", "SP", "TA", "UR"]:
+    VARIETY_SECTOR[_v] = "化工"
+for _v in ["AL", "AO", "BC", "CU", "LC", "NI", "PB", "SI", "SN", "ZN"]:
+    VARIETY_SECTOR[_v] = "有色"
+for _v in ["A", "B", "M", "OI", "P", "PK", "RM", "RS", "Y"]:
+    VARIETY_SECTOR[_v] = "油脂油料"
+for _v in ["HC", "I", "J", "JM", "RB", "SF", "SM", "SS", "WR"]:
+    VARIETY_SECTOR[_v] = "煤焦钢矿"
+for _v in ["FU", "LU", "PG", "SC", "ZC"]:
+    VARIETY_SECTOR[_v] = "能源"
+for _v in ["C", "JR", "LR", "PM", "RI", "RR", "WH"]:
+    VARIETY_SECTOR[_v] = "谷物"
+for _v in ["AG", "AU"]:
+    VARIETY_SECTOR[_v] = "贵金属"
+for _v in ["CF", "CY", "SR"]:
+    VARIETY_SECTOR[_v] = "软商品"
+for _v in ["FG", "BB", "FB", "V"]:
+    VARIETY_SECTOR[_v] = "非金属建材"
+for _v in ["PS"]:
+    VARIETY_SECTOR[_v] = "其他-多晶硅"
+for _v in ["IC", "IF", "IH", "IM"]:
+    VARIETY_SECTOR[_v] = "股指"
+
+
+def _match_variety_key(mapping: dict, variety: str):
+    if variety in mapping:
+        return mapping[variety]
+    vl = variety.lower()
+    for k, v in mapping.items():
+        if k.lower() == vl:
+            return v
+    return None
+
+
+def extract_variety(inst: str) -> str:
+    m = re.match(r"^([A-Za-z]+)", str(inst))
+    return m.group(1) if m else str(inst)
+
+
+def lookup_exchange_cn(variety: str) -> str:
+    code = _match_variety_key(VARIETY_EXCHANGE, variety)
+    if code is None:
+        return "其他"
+    return EXCHANGE_CN.get(code, code)
+
+
+def lookup_variety_cn(variety: str) -> str:
+    name = _match_variety_key(VARIETY_CN, variety)
+    return name if name else variety
+
+
+def lookup_sector(variety: str) -> str:
+    sector = _match_variety_key(VARIETY_SECTOR, variety)
+    return sector if sector else "其他"
+
+
+def instrument_sector_fields(inst: str) -> dict:
+    variety = extract_variety(inst)
+    return {
+        "variety": variety,
+        "variety_cn": lookup_variety_cn(variety),
+        "sector": lookup_sector(variety),
+        "exchange_cn": lookup_exchange_cn(variety),
+    }
+
+
 # ─────────────────────────────────────────────
 # RWP API 交互函数
 # ─────────────────────────────────────────────
@@ -1234,6 +1360,10 @@ def calculate_product(
             inst_warnings.append(f"static info error: {e}")
             has_warning = True
 
+        _sec = instrument_sector_fields(inst)
+        if not exchange:
+            exchange = _sec["exchange_cn"]
+
         margin_ratio = 0.0
         try:
             if margin_df is not None and not margin_df.empty:
@@ -1320,6 +1450,8 @@ def calculate_product(
                         "total_pnl":         round(total_pnl_long, 2),
                         "instrument_margin": round(inst_margin_long, 2) if abs(inst_margin_long) > abs(price * short_pos * multiplier * margin_ratio) else round(price * short_pos * multiplier * margin_ratio, 2),
                         "exchange":          exchange,
+                        "variety_cn":        _sec["variety_cn"],
+                        "sector":            _sec["sector"],
                         "last_trade_time":   last_trade_time,
                         "risk_match":        risk_match,
                         "_warnings":         "; ".join(inst_warnings),
@@ -1356,6 +1488,8 @@ def calculate_product(
                         "total_pnl":         round(total_pnl_short, 2),
                         "instrument_margin": round(inst_margin_short, 2) if abs(inst_margin_long) < abs(inst_margin_short) else round(inst_margin_short),
                         "exchange":          exchange,
+                        "variety_cn":        _sec["variety_cn"],
+                        "sector":            _sec["sector"],
                         "last_trade_time":   last_trade_time,
                         "risk_match":        risk_match,
                         "_warnings":         "; ".join(inst_warnings),
@@ -1383,6 +1517,8 @@ def calculate_product(
                 "total_pnl":         0.0,
                 "instrument_margin": 0.0,
                 "exchange":          exchange,
+                "variety_cn":        _sec["variety_cn"],
+                "sector":            _sec["sector"],
                 "last_trade_time":   last_trade_time,
                 "risk_match":        risk_match,
                 "_warnings":         "; ".join(inst_warnings),
@@ -1434,6 +1570,11 @@ def calculate_product(
         warnings_list.append(f"market value ratio calculation error: {e}")
 
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
+    if detail_df is not None and not detail_df.empty and "sector" in detail_df.columns:
+        _sec_rank = {s: i for i, s in enumerate(SECTOR_ORDER)}
+        detail_df["_sec_rank"] = detail_df["sector"].map(lambda s: _sec_rank.get(s, 999))
+        sort_cols = [c for c in ["_sec_rank", "instrument", "position_type"] if c in detail_df.columns]
+        detail_df = detail_df.sort_values(sort_cols).drop(columns=["_sec_rank"]).reset_index(drop=True)
 
     # ★ 新增：当 position_data 为空时，仍然返回一个空的 detail_df
     # 这样 dashboard 中仍然会显示这个产品的 detail section（标记为黄色+清仓）
@@ -1442,6 +1583,7 @@ def calculate_product(
             "instrument", "market_value", "position", "yd_position", "today_position",
             "risk_position", "clip", "uplimit", "position_type", "close_profit",
             "position_profit", "total_pnl", "instrument_margin", "exchange",
+            "variety_cn", "sector",
             "last_trade_time", "risk_match", "_warnings",
             "BuyOpenNumber", "BuyOpenMarketValue",
             "BuyCloseNumber", "BuyCloseMarketValue",
@@ -1975,10 +2117,10 @@ def dashboard():
                 with st.expander(title, expanded=False):
                     # ★ 修改：display_cols 新增8列
                     display_cols = [
-                        "instrument", "market_value",
+                        "instrument", "variety_cn", "sector", "exchange", "market_value",
                         "position", "yd_position", "today_position", "risk_position", "clip", "uplimit",
                         "close_profit", "position_profit", "total_pnl",
-                        "instrument_margin", "exchange", "last_trade_time",
+                        "instrument_margin", "last_trade_time",
                         # ★ 新增8列
                         "BuyOpenNumber", "BuyOpenMarketValue",
                         "BuyCloseNumber", "BuyCloseMarketValue",
@@ -2015,6 +2157,8 @@ def dashboard():
                     # ★ 修改：col_mapping 新增8列中文名
                     col_mapping = {
                         "instrument":          "合约名称",
+                        "variety_cn":          "品种",
+                        "sector":              "板块",
                         "market_value":        "合约市值",
                         "position":            "持仓数量",
                         "yd_position":         "昨仓",
@@ -2104,3 +2248,4 @@ def dashboard():
 
 if __name__ == "__main__":
     dashboard()
+
