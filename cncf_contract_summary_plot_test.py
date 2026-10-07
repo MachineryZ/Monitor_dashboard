@@ -789,6 +789,12 @@ def _render_page():
         group["pnl_ratio"] = (group["cum_pnl"] / init_cap * 10000) if init_cap != 0 else 0.0
         group = group.sort_values("time_idx")
         group = _break_gaps(group, "pnl_ratio")
+
+        # ★ 图例显示：product_instrument + 当前 bps（2 位小数）
+        _valid = group["pnl_ratio"].dropna()
+        cur_bps = float(_valid.iloc[-1]) if len(_valid) > 0 else 0.0
+        legend_name = f"{d['product_key']}_{inst} {cur_bps:.2f}"
+
         customdata = np.column_stack((
             [d["product_key"]] * len(group),
             [inst] * len(group),
@@ -801,7 +807,7 @@ def _render_page():
             x=group["time_idx"],
             y=group["pnl_ratio"],
             mode="lines",
-            name=f"{d['product_key']}_{inst}",
+            name=legend_name,
             line=dict(shape="hv", width=1, color=sector_color),
             connectgaps=False,
             customdata=customdata,
