@@ -1,4 +1,3 @@
-# cncf_contract_summary_plot.py
 import os
 import time
 import datetime
@@ -603,7 +602,7 @@ def build_intraday_series(
         pattern = r'position_data_(\d{8})_(\d{8})_(\d{2}:\d{2}:\d{2})\.csv'
         match = re.match(pattern, fname)
         if match:
-            date_str = match.group(1)
+            date_str = match.group(2)
             time_str = match.group(3)
             try:
                 return datetime.datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
@@ -776,8 +775,10 @@ def _render_page():
     st.subheader("📈 Contract Profit / Init Capital (bps)")
     fig_bps = go.Figure()
     has_bps = False
+
+    # ★ 先预计算每个合约的当前 bps（用于排序 + 图例）
+    prepared = []
     for d in filtered_data:
-        inst = d["instrument"]
         df = d["df"]
         if df is None or df.empty:
             continue
@@ -790,11 +791,23 @@ def _render_page():
         group["pnl_ratio"] = (group["cum_pnl"] / init_cap * 10000) if init_cap != 0 else 0.0
         group = group.sort_values("time_idx")
         group = _break_gaps(group, "pnl_ratio")
-
-        # ★ 图例显示：product_instrument + 当前 bps（2 位小数）
         _valid = group["pnl_ratio"].dropna()
         cur_bps = float(_valid.iloc[-1]) if len(_valid) > 0 else 0.0
-        legend_name = f"{d['product_key']}_{inst} {cur_bps:.2f}"
+        prepared.append({"d": d, "group": group, "init_cap": init_cap, "cur_bps": cur_bps})
+
+    # ★ 排序：先按账户（product_key）分块，同一账户内按 bps 从高到低
+    prepared.sort(key=lambda x: (x["d"]["product_key"], -x["cur_bps"]))
+
+    for item in prepared:
+        d = item["d"]
+        group = item["group"]
+        init_cap = item["init_cap"]
+        cur_bps = item["cur_bps"]
+        inst = d["instrument"]
+
+        # ★ bps 放前面，固定宽度 8、右对齐、保留 2 位小数
+        _bps_str = f"{cur_bps:>8.2f}".replace(" ", "\u00A0")
+        legend_name = f"{_bps_str} | {d['product_key']}_{inst}"
 
         customdata = np.column_stack((
             [d["product_key"]] * len(group),

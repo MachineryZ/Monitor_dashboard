@@ -602,7 +602,7 @@ def build_intraday_series(
         pattern = r'position_data_(\d{8})_(\d{8})_(\d{2}:\d{2}:\d{2})\.csv'
         match = re.match(pattern, fname)
         if match:
-            date_str = match.group(1)
+            date_str = match.group(2)
             time_str = match.group(3)
             try:
                 return datetime.datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H:%M:%S")
