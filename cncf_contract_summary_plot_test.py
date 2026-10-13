@@ -583,6 +583,7 @@ def _agg_snapshot(df: pd.DataFrame | None) -> pd.DataFrame:
     out["price"] = np.where(out["px_l"] != 0, out["px_l"], out["px_s"])
     out = out.rename(columns={"instrument_id": "instrument"})
     return out[["instrument", "net_pos", "cum_pnl", "price"]]
+
 def build_intraday_series(
     cfg: dict,
     current_date: int,
@@ -611,11 +612,17 @@ def build_intraday_series(
         return None
     base = _chart_session_base(current_date)
     end = _chart_session_end(current_date)
+    prev_td = get_previous_trade_date(current_date)
+    prev_day = datetime.datetime.strptime(str(prev_td), "%Y%m%d").date()
+    night_early_day = prev_day + timedelta(days=1)
+    curr_day = datetime.datetime.strptime(str(current_date), "%Y%m%d").date()
     timed_files = []
     for f in files:
         dt = parse_time_from_filename(f)
         if dt is None:
             continue
+        if dt.date() == curr_day and dt.time() <= datetime.time(2, 30):
+            dt = datetime.datetime.combine(night_early_day, dt.time())
         key = dt.replace(second=0, microsecond=0)
         if dt_to_idx is not None:
             if key not in dt_to_idx:
@@ -667,6 +674,8 @@ def build_intraday_series(
             continue
         result[inst] = g[["time_idx", "time_label", "net_pos", "market_value", "cum_pnl", "open_net", "price"]].reset_index(drop=True)
     return result if result else None
+
+
 # ── 页面渲染 ─────────────────────────────────────────────
 def _render_page():
     st.title("📊 All Contracts: Position & PnL (Intraday)")

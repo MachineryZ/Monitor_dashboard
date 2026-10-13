@@ -1591,6 +1591,11 @@ def build_intraday_series(
     sessions = _get_sessions_for_trading_day(current_date)
     base = sessions[0][0] if sessions else None
 
+    prev_td = get_previous_trade_date(current_date)
+    prev_day = datetime.datetime.strptime(str(prev_td), "%Y%m%d").date()
+    night_early_day = prev_day + timedelta(days=1)
+    curr_day = datetime.datetime.strptime(str(current_date), "%Y%m%d").date()
+
     # 有 dt_to_idx：精确到分钟判断快照是否落在这个交易日的交易时段内
     # 无 dt_to_idx：退化为「时间点落在任一交易时段」的粗略过滤
     timed_files = []
@@ -1598,6 +1603,8 @@ def build_intraday_series(
         dt = parse_time_from_filename(f)
         if dt is None:
             continue
+        if dt.date() == curr_day and dt.time() <= datetime.time(2, 30):
+            dt = datetime.datetime.combine(night_early_day, dt.time())
         key = dt.replace(second=0, microsecond=0)
         if dt_to_idx is not None:
             if key not in dt_to_idx:
