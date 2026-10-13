@@ -408,7 +408,7 @@ def main():
         st.info("暂无 Summary 数据")
 
     # ── 渲染 Detail 表 ──
-    st.subheader("Detail 明细（每个账户一行）")
+    st.subheader("Detail 明细")
     if detail_rows:
         detail_df = pd.DataFrame(detail_rows)
         # 重命名列名，保持与需求一致
