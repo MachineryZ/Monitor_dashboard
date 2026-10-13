@@ -151,14 +151,14 @@ def load_signal_file(market, signal_dir, trade_date):
         return None
     try:
         df = pd.read_csv(path)
-        # ★ 核心修复：去除列名前后空格，统一转小写，防止 KeyError
+        # 去除列名前后空格，统一转小写，防止 KeyError
         df.columns = [str(c).strip().lower() for c in df.columns]
         return df
     except Exception:
         return None
 
 def parse_all_stats(s):
-    """安全解析 all_stats 字段"""
+    """安全解析 all_stats 字段，仅用于内部对比，不再展示具体值"""
     if pd.isna(s) or s is None:
         return 0.0
     s = str(s).strip()
@@ -261,7 +261,7 @@ def find_position_file(position_path, store_time_str):
         return best_file, best_sec
     return None, None
 
-# ── 仓位汇总 ──────────────────────────────────────────
+# ── 仓位汇总（仅返回是否有差异，不展示具体数值） ────────
 def load_and_aggregate_position(position_path, fname):
     path = os.path.join(position_path, fname)
     try:
@@ -269,7 +269,6 @@ def load_and_aggregate_position(position_path, fname):
     except Exception:
         return {}
 
-    # 列名标准化
     df.columns = [str(c).strip().lower() for c in df.columns]
 
     if 'instrument_id' not in df.columns or 'pos_type' not in df.columns or 'position' not in df.columns:
@@ -288,7 +287,7 @@ def load_and_aggregate_position(position_path, fname):
         result[inst] = l - s
     return result
 
-# ── 对比 ──────────────────────────────────────────────
+# ── 对比（仅返回不一致的合约列表） ──────────────────────
 def compare_signal_position(signal_df, position_dict):
     if signal_df is None or signal_df.empty or 'all_stats' not in signal_df.columns:
         return False, []
@@ -301,11 +300,7 @@ def compare_signal_position(signal_df, position_dict):
         target = parse_all_stats(row.get('all_stats', 0.0))
         actual = position_dict.get(inst, 0)
         if abs(target - actual) > 1e-6:
-            mismatches.append({
-                'instrument': inst,
-                'target': target,
-                'actual': actual,
-            })
+            mismatches.append(inst)
 
     return len(mismatches) == 0, mismatches
 
@@ -318,7 +313,7 @@ def main():
     st.caption(f"交易日：{trade_date}")
 
     summary_rows = []
-    detail_data = {}
+    detail_rows = []  # 每个账户一行
     alert_messages = []
 
     for cfg in ACCOUNT_CONFIGS:
@@ -347,12 +342,19 @@ def main():
 
         # 4. 仓位与信号对比
         position_status = "❌"
-        mismatches = []
+        mismatched_contracts = []
         if latest_signals is not None and not latest_signals.empty and position_file:
             matched, mismatches = compare_signal_position(latest_signals, position_dict)
             position_status = "✅" if matched else "❌"
+            mismatched_contracts = mismatches
 
-        # 5. 写入 Summary 行
+        # 5. 获取涉及到的交易所
+        exchange_set = set()
+        if latest_signals is not None and not latest_signals.empty:
+            exchange_set = set(latest_signals['exchange'].unique())
+        exchange_str = ", ".join(sorted(exchange_set)) if exchange_set else "无"
+
+        # 6. 写入 Summary 行（保持原有逻辑）
         summary_rows.append({
             "account": account,
             "brokers": broker,
@@ -363,58 +365,68 @@ def main():
             "position_time": position_time,
         })
 
-        # 6. 写入 Detail 行
-        if latest_signals is not None and not latest_signals.empty:
-            detail_rows = []
-            for _, row in latest_signals.iterrows():
-                inst = row.get('instrument', '未知合约')
-                target = parse_all_stats(row.get('all_stats', 0.0))
-                actual = position_dict.get(inst, None) if position_file else None
-                exch = lookup_exchange(extract_variety(inst))
-                
-                # 将不一致的合约高亮或标记，这里我们通过表格展现，后续可加颜色
-                detail_rows.append({
-                    "交易所": exch,
-                    "信号": target,
-                    "仓位": actual if actual is not None else "无快照",
-                    "step": row.get('step', ''),
-                    "store_time": row.get('store_time', ''),
-                    "position_time": position_time or "无",
-                    "合约名": inst,
-                })
-            detail_data[account] = detail_rows
+        # 7. 写入 Detail 行（每个账户一行）
+        # 把不一致的合约拼接成字符串
+        if mismatched_contracts:
+            contracts_str = ", ".join(mismatched_contracts)
+        elif position_file is None:
+            contracts_str = "未找到仓位文件"
+        else:
+            contracts_str = "-"
 
-        # 7. 收集异常通知
+        detail_rows.append({
+            "account": account,
+            "broker": broker,
+            "exchange": exchange_str,
+            "signal": signal_status,
+            "position": position_status,
+            "step": max_step if max_step is not None else "-",
+            "store_time": store_time if store_time else "-",
+            "position_time": position_time if position_time else "无",
+            "contracts": contracts_str,
+        })
+
+        # 8. 收集异常通知
         if signal_status != "✅" or position_status != "✅":
             alert_messages.append(f"账户 {account} ({broker}): 信号={signal_status}, 仓位={position_status}")
-            if mismatches:
-                for mm in mismatches:
-                    alert_messages.append(f"  合约 {mm['instrument']}: 信号={mm['target']}, 仓位={mm['actual']}")
+            if mismatched_contracts:
+                alert_messages.append(f"  不一致合约: {', '.join(mismatched_contracts)}")
+            if position_file is None and store_time:
+                alert_messages.append(f"  30秒内未找到仓位文件更新")
 
     # ── 渲染 Summary 表 ──
     st.subheader("Summary 总览")
     if summary_rows:
         summary_df = pd.DataFrame(summary_rows)
-        # 重命名列以符合要求
         summary_df = summary_df.rename(columns={
-            "account": "account", "brokers": "brokers",
-            "signal": "signal(信号)", "position": "position(仓位)",
-            "step": "step", "store_time": "store_time", "position_time": "position_time"
+            "account": "Account", "brokers": "Brokers",
+            "signal": "Signal(信号)", "position": "Position(仓位)",
+            "step": "Step", "store_time": "Signal Time", "position_time": "Position Time"
         })
         st.dataframe(summary_df, use_container_width=True)
     else:
         st.info("暂无 Summary 数据")
 
     # ── 渲染 Detail 表 ──
-    st.subheader("Detail 明细")
-    if detail_data:
-        for account, rows in detail_data.items():
-            with st.expander(f"📁 账户：{account}", expanded=False):
-                detail_df = pd.DataFrame(rows)
-                # 保证列顺序
-                cols = ["交易所", "信号", "仓位", "step", "store_time", "position_time", "合约名"]
-                detail_df = detail_df[[c for c in cols if c in detail_df.columns]]
-                st.dataframe(detail_df, use_container_width=True)
+    st.subheader("Detail 明细（每个账户一行）")
+    if detail_rows:
+        detail_df = pd.DataFrame(detail_rows)
+        # 重命名列名，保持与需求一致
+        detail_df = detail_df.rename(columns={
+            "account": "Account",
+            "broker": "Broker",
+            "exchange": "交易所",
+            "signal": "信号",
+            "position": "仓位",
+            "step": "Step",
+            "store_time": "Signal Time",
+            "position_time": "Position Time",
+            "contracts": "异常合约"
+        })
+        # 确保列顺序
+        cols = ["Account", "Broker", "交易所", "信号", "仓位", "Step", "Signal Time", "Position Time", "异常合约"]
+        detail_df = detail_df[[c for c in cols if c in detail_df.columns]]
+        st.dataframe(detail_df, use_container_width=True)
     else:
         st.info("暂无 Detail 数据")
 
