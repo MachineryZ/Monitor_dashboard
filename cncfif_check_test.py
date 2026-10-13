@@ -1,325 +1,405 @@
 import os
-import datetime
 import re
+import time
+import datetime
 import pandas as pd
 import numpy as np
 import streamlit as st
-from datetime import timedelta
 
-# ─────────────────────────────────────────────
-# 1. 配置与常量
-# ─────────────────────────────────────────────
+# ── 配置 ──────────────────────────────────────────────
+CALENDAR_PATH = "/cpfs/intrastats/calendar"
+REFRESH_INTERVAL_SECONDS = 300
 
-# 账户配置（完全匹配你提供的信号目录和仓位目录）
-ACCOUNT_CONFIGS = [
-    # CNCF (商品期货)
-    {"account": "ax1h_ya", "broker": "ya", "market": "cncf", "signal_dir": "cncf_melt_ax1h_ya_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya"},
-    {"account": "bgt_ax1h", "broker": "dz", "market": "cncf", "signal_dir": "cncf_melt_bgt_dz_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian"},
-    {"account": "shjq", "broker": "zx", "market": "cncf", "signal_dir": "cncf_melt_shjq_zx_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx"},
-    {"account": "shph1h", "broker": "zx", "market": "cncf", "signal_dir": "cncf_melt_shph1h_zx_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx"},
-    {"account": "zz1h", "broker": "dz", "market": "cncf", "signal_dir": "cncf_melt_zhizeng_dz_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date"},
-    # CNIF (股指期货)
-    {"account": "jz1h", "broker": "dz", "market": "cnif", "signal_dir": "cnif_short_jz1h_dz_dashboard_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h"},
-    {"account": "ly1h", "broker": "dz", "market": "cnif", "signal_dir": "cnif_position_melt_ly1h_dz_dashboard_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h"},
-    {"account": "zz1h_zx", "broker": "zx", "market": "cnif", "signal_dir": "cnif_short_zz1h_zx_dashboard_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h"},
-    {"account": "zz1h_ya", "broker": "ya", "market": "cnif", "signal_dir": "cnif_short_zz1h_zx_dashboard_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya"},
-    {"account": "jx1h_zx", "broker": "zx", "market": "cnif", "signal_dir": "cnif_melt_ls_jx1h_zx_dashboard_bohr", "position_dir": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx"},
-]
+# 交易所映射（品种前缀 → 交易所代码）
+VARIETY_EXCHANGE = {}
+for _v in ["cu", "al", "zn", "pb", "ni", "sn", "au", "ag", "rb", "hc",
+           "ss", "bu", "ru", "sp", "fu", "wr", "ao", "br"]:
+    VARIETY_EXCHANGE[_v] = "SHFE"
+for _v in ["a", "b", "c", "cs", "i", "j", "jd", "jm", "l", "m", "p",
+           "pp", "v", "y", "eg", "eb", "rr", "pg", "lh", "bb", "fb", "LG"]:
+    VARIETY_EXCHANGE[_v] = "DCE"
+for _v in ["SR", "CF", "TA", "MA", "FG", "RM", "OI", "ZC", "AP", "CJ",
+           "UR", "SA", "PF", "PK", "SF", "SM", "WH", "PM", "RI", "LR",
+           "JR", "CY", "RS", "SH", "PX", "PR"]:
+    VARIETY_EXCHANGE[_v] = "CZCE"
+for _v in ["IF", "IC", "IH", "IM", "T", "TF", "TS", "TL"]:
+    VARIETY_EXCHANGE[_v] = "CFFEX"
+for _v in ["sc", "lu", "nr", "bc", "ec"]:
+    VARIETY_EXCHANGE[_v] = "INE"
+for _v in ["si", "lc", "ps"]:
+    VARIETY_EXCHANGE[_v] = "GFEX"
 
-# 交易所品种映射（硬编码）
-EXCHANGE_MAP = {
-    "SHFE": ["CU", "AL", "ZN", "PB", "NI", "SN", "AU", "AG", "RB", "HC", "SS", "BU", "RU", "SP", "FU", "WR", "AO", "BR"],
-    "CZCE": ["SR", "CF", "CY", "TA", "MA", "FG", "RM", "OI", "ZC", "SM", "SF", "AP", "CJ", "UR", "SA", "PF", "PK", "SH"],
-    "DCE": ["A", "B", "C", "CS", "M", "Y", "P", "V", "I", "J", "JM", "JD", "L", "PP", "EG", "EB", "RR", "PG", "LH", "BB", "FB", "OP"],
-    "INE": ["SC", "LU", "NR", "BC", "EC"]
+EXCHANGE_CN = {
+    "SHFE": "上期所",
+    "DCE": "大商所",
+    "CZCE": "郑商所",
+    "CFFEX": "中金所",
+    "INE": "上期能源",
+    "GFEX": "广期所",
 }
 
-def get_expected_exchanges():
-    now = datetime.datetime.now().time()
-    # 夜盘 21:00 - 02:30
-    if datetime.time(21, 0) <= now or now <= datetime.time(2, 30):
-        if now >= datetime.time(23, 0) or now <= datetime.time(2, 30):
-            return ["SHFE"]  # 11点后只有上期所
-        return ["SHFE", "CZCE", "DCE"]  # 夜盘三个所
-    # 日盘 09:00 - 15:00
-    elif datetime.time(9, 0) <= now <= datetime.time(15, 0):
-        return ["SHFE", "CZCE", "DCE", "INE"]
-    return []  # 非交易时段
+def extract_variety(inst):
+    m = re.match(r"^([A-Za-z]+)", str(inst))
+    return m.group(1) if m else str(inst)
 
-def get_exchange(instrument):
-    inst_upper = str(instrument).upper()
-    for exch, codes in EXCHANGE_MAP.items():
-        for code in codes:
-            if inst_upper.startswith(code):
-                return exch
-    return "UNKNOWN"
+def lookup_exchange(variety):
+    if variety in VARIETY_EXCHANGE:
+        return VARIETY_EXCHANGE[variety]
+    vl = variety.lower()
+    for k, v in VARIETY_EXCHANGE.items():
+        if k.lower() == vl:
+            return v
+    return "其他"
 
-def parse_stats(x):
-    """安全解析 all_stats 字段，例如 '[0.0]' -> 0.0, '[-75.0]' -> -75.0"""
+# 账户配置（含信号目录与仓位路径）
+ACCOUNT_CONFIGS = [
+    {
+        "account": "ax1h_ya",
+        "broker": "ya",
+        "market": "commodity",
+        "signal_dir": "cncf_melt_ax1h_ya_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/cncf_trade_data_ax1h_ya",
+    },
+    {
+        "account": "bgt_ax1h",
+        "broker": "dz",
+        "market": "commodity",
+        "signal_dir": "cncf_melt_bgt_dz_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_baguatian",
+    },
+    {
+        "account": "shjq",
+        "broker": "zx",
+        "market": "commodity",
+        "signal_dir": "cncf_melt_shjq_zx_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shjq_zx",
+    },
+    {
+        "account": "shph1h",
+        "broker": "zx",
+        "market": "commodity",
+        "signal_dir": "cncf_melt_shph1h_zx_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_data_shph1h_zx",
+    },
+    {
+        "account": "zz1h",
+        "broker": "dz",
+        "market": "commodity",
+        "signal_dir": "cncf_melt_zhizeng_dz_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/commodity_trade_date",
+    },
+    {
+        "account": "jz1h",
+        "broker": "dz",
+        "market": "futures",
+        "signal_dir": "cnif_short_jz1h_dz_dashboard_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jz1h",
+    },
+    {
+        "account": "ly1h",
+        "broker": "dz",
+        "market": "futures",
+        "signal_dir": "cnif_position_melt_ly1h_dz_dashboard_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_ly1h",
+    },
+    {
+        "account": "zz1h_zx",
+        "broker": "zx",
+        "market": "futures",
+        "signal_dir": "cnif_short_zz1h_zx_dashboard_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h",
+    },
+    {
+        "account": "zz1h_ya",
+        "broker": "ya",
+        "market": "futures",
+        "signal_dir": None,   # 暂无对应信号目录
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_zz1h_ya",
+    },
+    {
+        "account": "jx1h_zx",
+        "broker": "zx",
+        "market": "futures",
+        "signal_dir": "cnif_melt_ls_jx1h_zx_dashboard_bohr",
+        "position_path": "/mnt/nfs_bohr_data1/china/trading_realdata/cnif_trade_data_jx1h_zx",
+    },
+]
+
+# ── 日历 ──────────────────────────────────────────────
+def get_date_from_calendar():
+    date = datetime.datetime.now().date()
+    date_int = int(date.strftime("%Y%m%d"))
     try:
-        return float(str(x).strip('[]'))
-    except:
+        date_list = np.loadtxt(CALENDAR_PATH, dtype=np.int64, ndmin=1)
+        pos = np.searchsorted(date_list, date_int, side="right")
+        date_int = int(date_list[pos - 1])
+        next_trade_day = int(date_list[pos]) if pos < len(date_list) else date_int
+    except Exception:
+        next_trade_day = date_int
+    return date_int, next_trade_day
+
+# ── 信号文件读取 ──────────────────────────────────────
+def load_signal_file(market, signal_dir, trade_date):
+    if signal_dir is None:
+        return None
+    if market == "commodity":
+        base = "/cpfs/prod/prod_log/china_future/cncf"
+    else:
+        base = "/cpfs/prod/prod_log/china_future/cnif"
+    path = os.path.join(base, signal_dir, f"{trade_date}.csv")
+    if not os.path.exists(path):
+        return None
+    try:
+        df = pd.read_csv(path)
+        return df
+    except Exception:
+        return None
+
+def parse_all_stats(s):
+    s = str(s).strip()
+    if s.startswith('[') and s.endswith(']'):
+        s = s[1:-1]
+    try:
+        return float(s)
+    except Exception:
         return 0.0
 
-# ─────────────────────────────────────────────
-# 2. 数据加载与处理
-# ─────────────────────────────────────────────
+# ── 信号覆盖检查 ──────────────────────────────────────
+def check_signal_coverage(signal_df):
+    if signal_df is None or signal_df.empty:
+        return "❌", None, None, None
 
-def load_signals(signal_dir, trading_day):
-    """加载信号数据"""
-    file_path = f"/cpfs/prod/prod_log/china_future/{signal_dir}/{trading_day}.csv"
-    if not os.path.exists(file_path):
-        return None, f"信号文件不存在: {file_path}"
+    if 'step' not in signal_df.columns:
+        return "❌", None, None, None
+
+    signal_df['step'] = pd.to_numeric(signal_df['step'], errors='coerce').fillna(-1)
+    max_step = signal_df['step'].max()
+    latest = signal_df[signal_df['step'] == max_step].copy()
+
+    if latest.empty:
+        return "❌", None, None, None
+
+    if 'store_time' not in latest.columns:
+        return "❌", max_step, None, None
+
+    latest['store_time_str'] = latest['store_time'].astype(str)
+    latest_store_time = latest['store_time_str'].max()
+
+    latest['variety'] = latest['instrument'].apply(extract_variety)
+    latest['exchange'] = latest['variety'].apply(lookup_exchange)
+
     try:
-        df = pd.read_csv(file_path)
-        if df.empty:
-            return None, f"信号文件为空: {file_path}"
-        
-        # 解析时间，处理可能缺失的情况
-        df['store_time_parsed'] = pd.to_datetime(df['store_time'], format='%H:%M:%S.%f', errors='coerce')
-        if df['store_time_parsed'].isna().all():
-            return None, f"store_time 解析失败: {file_path}"
-            
-        df['target_pos'] = df['all_stats'].apply(parse_stats)
-        df['exchange'] = df['instrument'].apply(get_exchange)
-        return df, None
-    except Exception as e:
-        return None, f"读取信号文件异常: {str(e)}"
+        t = datetime.datetime.strptime(latest_store_time.split('.')[0], "%H:%M:%S").time()
+    except Exception:
+        t = datetime.datetime.now().time()
 
-def load_positions(position_dir, trading_day, store_time_str):
-    """根据信号的 store_time，寻找之后30秒内的最新仓位文件"""
-    if not store_time_str or store_time_str == "-":
-        return None, None, "无 store_time"
-    
+    if t >= datetime.time(21, 0) or t <= datetime.time(2, 30):
+        # 夜盘：23:00 后仅上期所，之前为三个所
+        if t >= datetime.time(23, 0) or t <= datetime.time(2, 30):
+            expected = {"SHFE"}
+        else:
+            expected = {"SHFE", "DCE", "CZCE"}
+    else:
+        # 日盘：四个所
+        expected = {"SHFE", "DCE", "CZCE", "CFFEX"}
+
+    actual = set(latest['exchange'].unique())
+
+    if not actual:
+        return "❌", max_step, latest_store_time, None
+
+    if expected.issubset(actual):
+        status = "✅"
+    elif actual & expected:
+        status = "⚠️"
+    else:
+        status = "❌"
+
+    return status, max_step, latest_store_time, latest
+
+# ── 仓位文件查找 ──────────────────────────────────────
+def find_position_file(position_path, store_time_str):
+    if not os.path.exists(position_path):
+        return None, None
     try:
-        target_time = pd.to_datetime(store_time_str, format='%H:%M:%S.%f').time()
-    except:
-        return None, None, "store_time 格式错误"
+        store_time = datetime.datetime.strptime(store_time_str.split('.')[0], "%H:%M:%S").time()
+    except Exception:
+        return None, None
 
-    # 使用 datetime 对象进行比较，处理跨日情况
-    today = datetime.date.today()
-    target_dt = datetime.datetime.combine(today, target_time)
-
+    store_sec = store_time.hour * 3600 + store_time.minute * 60 + store_time.second
     best_file = None
-    best_time = None
-    min_diff = timedelta.max
+    best_sec = None
 
-    if not os.path.exists(position_dir):
-        return None, None, f"仓位目录不存在: {position_dir}"
-
-    for f in os.listdir(position_dir):
-        if not f.startswith(f"position_data_{trading_day}") or not f.endswith(".csv"):
+    for fname in os.listdir(position_path):
+        m = re.match(r'position_data_(\d{8})_(\d{8})_(\d{2}:\d{2}:\d{2})\.csv', fname)
+        if not m:
             continue
-        
-        match = re.search(r'_(\d{2}:\d{2}:\d{2})\.csv$', f)
-        if not match:
-            continue
-        
-        file_time_str = match.group(1)
+        time_str = m.group(3)
         try:
-            file_time = pd.to_datetime(file_time_str, format='%H:%M:%S').time()
-            file_dt = datetime.datetime.combine(today, file_time)
-        except:
+            file_time = datetime.datetime.strptime(time_str, "%H:%M:%S").time()
+        except Exception:
             continue
+        file_sec = file_time.hour * 3600 + file_time.minute * 60 + file_time.second
 
-        # 处理跨日情况 (例如 store_time 是 23:59:59，file_time 是 00:00:10)
-        if file_dt < target_dt - timedelta(hours=12):
-            file_dt += timedelta(days=1)
-        elif file_dt > target_dt + timedelta(hours=12):
-            file_dt -= timedelta(days=1)
+        diff = file_sec - store_sec
+        if diff < -43200:
+            diff += 86400
+        elif diff > 43200:
+            diff -= 86400
 
-        # 寻找 store_time 之后 30s 内的文件
-        if target_dt <= file_dt <= target_dt + timedelta(seconds=30):
-            diff = file_dt - target_dt
-            if diff < min_diff:
-                min_diff = diff
-                best_file = f
-                best_time = file_time_str
+        if 0 <= diff <= 30:
+            if best_sec is None or file_sec < best_sec:
+                best_file = fname
+                best_sec = file_sec
 
     if best_file:
-        try:
-            df = pd.read_csv(os.path.join(position_dir, best_file))
-            if df.empty:
-                return None, best_time, "仓位文件为空"
-            # 计算净仓位
-            df['net_pos'] = df.apply(lambda row: row['position'] if row['pos_type'] == 'LONG' else -row['position'], axis=1)
-            df_agg = df.groupby('instrument_id')['net_pos'].sum().reset_index()
-            df_agg['exchange'] = df_agg['instrument_id'].apply(get_exchange)
-            return df_agg, best_time, None
-        except Exception as e:
-            return None, best_time, f"解析仓位文件异常: {str(e)}"
+        return best_file, best_sec
+    return None, None
 
-    return None, None, "30秒内无仓位文件更新"
+# ── 仓位汇总 ──────────────────────────────────────────
+def load_and_aggregate_position(position_path, fname):
+    path = os.path.join(position_path, fname)
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return {}
 
-def compare_signal_and_position(sig_df, pos_df, exchange):
-    """对比信号和仓位，返回不匹配的合约列表"""
-    if sig_df is None:
-        return ["信号数据缺失"]
-    
-    sig_exch = sig_df[sig_df['exchange'] == exchange]
-    sig_dict = dict(zip(sig_exch['instrument'], sig_exch['target_pos']))
+    if 'instrument_id' not in df.columns or 'pos_type' not in df.columns or 'position' not in df.columns:
+        return {}
 
-    if pos_df is None:
-        return list(sig_dict.keys()) # 如果没有仓位数据，所有有信号的合约都不匹配
+    df['position'] = pd.to_numeric(df['position'], errors='coerce').fillna(0)
 
-    pos_exch = pos_df[pos_df['exchange'] == exchange]
-    pos_dict = dict(zip(pos_exch['instrument_id'], pos_exch['net_pos']))
+    long_pos = df[df['pos_type'] == 'LONG'].groupby('instrument_id')['position'].sum()
+    short_pos = df[df['pos_type'] == 'SHORT'].groupby('instrument_id')['position'].sum()
+
+    all_inst = set(long_pos.index) | set(short_pos.index)
+    result = {}
+    for inst in all_inst:
+        l = long_pos.get(inst, 0)
+        s = short_pos.get(inst, 0)
+        result[inst] = l - s
+    return result
+
+# ── 对比 ──────────────────────────────────────────────
+def compare_signal_position(signal_df, position_dict):
+    if signal_df is None or signal_df.empty:
+        return False, []
 
     mismatches = []
-    all_insts = set(sig_dict.keys()) | set(pos_dict.keys())
+    for _, row in signal_df.iterrows():
+        inst = row['instrument']
+        target = parse_all_stats(row['all_stats'])
+        actual = position_dict.get(inst, 0)
+        if abs(target - actual) > 1e-6:
+            mismatches.append({
+                'instrument': inst,
+                'target': target,
+                'actual': actual,
+            })
 
-    for inst in all_insts:
-        target = sig_dict.get(inst, 0)
-        actual = pos_dict.get(inst, 0)
-        if target != actual:
-            mismatches.append(inst)
+    return len(mismatches) == 0, mismatches
 
-    return mismatches
-
-# ─────────────────────────────────────────────
-# 3. Dashboard 界面渲染
-# ─────────────────────────────────────────────
-
-def render_status_icon(status):
-    if status == "PASS": return "✅"
-    elif status == "WARN": return "⚠️"
-    else: return "❌"
-
+# ── 页面渲染 ──────────────────────────────────────────
 def main():
-    st.set_page_config(page_title="交易监控面板", layout="wide")
-    st.title("📊 交易监控面板 - 实时状态")
-    
-    # 侧边栏：日期选择器（方便测试，默认 2026-10-12）
-    st.sidebar.header("监控设置")
-    default_date = datetime.date(2026, 10, 12)
-    selected_date = st.sidebar.date_input("选择交易日", default_date)
-    trading_day = selected_date.strftime("%Y%m%d")
-    
-    expected_exchanges = get_expected_exchanges()
-    st.sidebar.write(f"当前交易日: {trading_day}")
-    st.sidebar.write(f"预期活跃交易所: {', '.join(expected_exchanges) if expected_exchanges else '非交易时段'}")
+    st.set_page_config(page_title="交易信号与仓位检查", layout="wide")
+    st.title("📊 交易信号与仓位检查")
 
-    summary_data = []
-    detail_data = []
+    trade_date, _ = get_date_from_calendar()
+    st.caption(f"交易日：{trade_date}")
+
+    summary_rows = []
+    detail_data = {}
+    alert_messages = []
 
     for cfg in ACCOUNT_CONFIGS:
-        account = cfg["account"]
-        broker = cfg["broker"]
-        signal_dir = cfg["signal_dir"]
-        position_dir = cfg["position_dir"]
+        account = cfg['account']
+        broker = cfg['broker']
+        market = cfg['market']
+        signal_dir = cfg.get('signal_dir')
+        position_path = cfg['position_path']
 
-        # 1. 加载信号
-        sig_df, sig_err = load_signals(signal_dir, trading_day)
-        
-        account_sig_status = "PASS"
-        account_pos_status = "PASS"
-        account_step = "-"
-        account_store_time = "-"
-        account_pos_time = "-"
+        # 加载信号
+        signal_df = load_signal_file(market, signal_dir, trade_date)
 
-        if sig_df is None or sig_err:
-            account_sig_status = "FAIL"
-            summary_data.append({
-                "account": account, "broker": broker, "signal": render_status_icon("FAIL"),
-                "position": render_status_icon("FAIL"), "step": "-", "store_time": sig_err, "position_time": "-"
-            })
-            continue
+        # 信号覆盖检查
+        signal_status, max_step, store_time, latest_signals = check_signal_coverage(signal_df)
 
-        # 提取最新的 step 和 store_time
-        latest_sig = sig_df.sort_values('store_time_parsed').iloc[-1]
-        account_step = latest_sig['step']
-        account_store_time = latest_sig['store_time']
+        # 查找仓位文件
+        position_file = None
+        position_time = None
+        position_dict = {}
+        if store_time:
+            position_file, _ = find_position_file(position_path, store_time)
+            if position_file:
+                m = re.search(r'(\d{2}:\d{2}:\d{2})', position_file)
+                position_time = m.group(1) if m else None
+                position_dict = load_and_aggregate_position(position_path, position_file)
 
-        # 判断信号状态
-        active_exchanges = [e for e in expected_exchanges if e in sig_df['exchange'].values]
-        if len(expected_exchanges) > 0:
-            if len(active_exchanges) == len(expected_exchanges):
-                account_sig_status = "PASS"
-            elif len(active_exchanges) > 0:
-                account_sig_status = "WARN"
-            else:
-                account_sig_status = "FAIL"
-        else:
-            account_sig_status = "PASS" # 非交易时段，不报错
+        # 对比
+        position_status = "❌"
+        mismatches = []
+        if latest_signals is not None and not latest_signals.empty and position_file:
+            matched, mismatches = compare_signal_position(latest_signals, position_dict)
+            position_status = "✅" if matched else "❌"
 
-        # 2. 加载仓位
-        pos_df, pos_time, pos_err = load_positions(position_dir, trading_day, account_store_time)
-        account_pos_time = pos_time if pos_time else "-"
-
-        # 3. 对比每个交易所
-        has_pos_mismatch = False
-        for exch in expected_exchanges:
-            mismatches = compare_signal_and_position(sig_df, pos_df, exch)
-            
-            if pos_df is None:
-                pos_status = "FAIL"
-                has_pos_mismatch = True
-                mismatch_str = pos_err if pos_err else "无仓位数据"
-            elif len(mismatches) > 0:
-                pos_status = "FAIL"
-                has_pos_mismatch = True
-                mismatch_str = ", ".join(mismatches)
-            else:
-                pos_status = "PASS"
-                mismatch_str = ""
-
-            # 记录明细数据
-            detail_data.append({
-                "account": account,
-                "broker": broker,
-                "交易所": exch,
-                "信号": render_status_icon(account_sig_status if exch in active_exchanges else "FAIL"),
-                "仓位": render_status_icon(pos_status),
-                "step": account_step,
-                "store_time": account_store_time,
-                "position_time": account_pos_time,
-                "合约名": mismatch_str
-            })
-
-        if has_pos_mismatch:
-            account_pos_status = "FAIL"
-
-        # 记录总览数据
-        summary_data.append({
+        summary_rows.append({
             "account": account,
-            "broker": broker,
-            "signal": render_status_icon(account_sig_status),
-            "position": render_status_icon(account_pos_status),
-            "step": account_step,
-            "store_time": account_store_time,
-            "position_time": account_pos_time
+            "brokers": broker,
+            "signal": signal_status,
+            "position": position_status,
+            "step": max_step,
+            "store_time": store_time,
+            "position_time": position_time,
         })
 
-    # ── 渲染 Summary ──
-    st.subheader("Summary 总览")
-    if summary_data:
-        summary_df = pd.DataFrame(summary_data)
-        def highlight_status(val):
-            if val == "✅": return "color: green; font-weight: bold; font-size: 20px;"
-            elif val == "⚠️": return "color: orange; font-weight: bold; font-size: 20px;"
-            elif val == "❌": return "color: red; font-weight: bold; font-size: 20px;"
-            return ""
-        
-        styled_summary = summary_df.style.map(highlight_status, subset=["signal", "position"])
-        st.dataframe(styled_summary, width="stretch", hide_index=True)
-    else:
-        st.info("暂无数据")
+        # 明细
+        if latest_signals is not None and not latest_signals.empty:
+            detail_rows = []
+            for _, row in latest_signals.iterrows():
+                inst = row['instrument']
+                target = parse_all_stats(row['all_stats'])
+                actual = position_dict.get(inst, None) if position_file else None
+                exch = lookup_exchange(extract_variety(inst))
+                detail_rows.append({
+                    "交易所": exch,
+                    "信号": target,
+                    "仓位": actual if actual is not None else "N/A",
+                    "step": row['step'],
+                    "store_time": row['store_time'],
+                    "position_time": position_time or "N/A",
+                    "合约名": inst,
+                })
+            detail_data[account] = detail_rows
 
-    # ── 渲染 Detail ──
-    st.subheader("Detail 明细")
-    if detail_data:
-        detail_df = pd.DataFrame(detail_data)
-        for account in detail_df['account'].unique():
-            acc_df = detail_df[detail_df['account'] == account]
-            broker = acc_df.iloc[0]['broker']
-            has_error = any(acc_df['仓位'].apply(lambda x: x == "❌")) or any(acc_df['信号'].apply(lambda x: x == "❌"))
-            title = f"{'🔴' if has_error else '🟢'} [{account}] | {broker}"
-            
-            with st.expander(title, expanded=has_error):
-                display_cols = ["交易所", "信号", "仓位", "step", "store_time", "position_time", "合约名"]
-                st.dataframe(acc_df[display_cols], width="stretch", hide_index=True)
+        # 收集异常
+        if signal_status != "✅" or position_status != "✅":
+            alert_messages.append(f"账户 {account} ({broker}): 信号={signal_status}, 仓位={position_status}")
+            if mismatches:
+                for mm in mismatches:
+                    alert_messages.append(f"  合约 {mm['instrument']}: 信号={mm['target']}, 仓位={mm['actual']}")
+
+    # 汇总表
+    st.subheader("Summary")
+    summary_df = pd.DataFrame(summary_rows)
+    st.dataframe(summary_df, use_container_width=True)
+
+    # 明细表
+    st.subheader("Detail")
+    for account, rows in detail_data.items():
+        with st.expander(f"{account}", expanded=False):
+            detail_df = pd.DataFrame(rows)
+            st.dataframe(detail_df, use_container_width=True)
+
+    # 异常通知
+    st.markdown("---")
+    st.subheader("异常通知")
+    if alert_messages:
+        for msg in alert_messages:
+            st.error(msg)
     else:
-        st.info("暂无明细数据")
+        st.success("所有账户信号和仓位正常")
 
 if __name__ == "__main__":
     main()
+    time.sleep(REFRESH_INTERVAL_SECONDS)
+    st.rerun()
